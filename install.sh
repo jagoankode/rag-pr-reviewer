@@ -25,18 +25,20 @@ if [ "$NODE_MAJOR" -lt 18 ]; then
     exit 1
 fi
 
-# 2. Check npm / git
+# 2. Check npm
 if ! command -v npm >/dev/null 2>&1; then
     echo -e "${RED}Error: npm tidak ditemukan.${NC}"
     exit 1
 fi
 
 INSTALL_DIR="$HOME/.pr-rag/app"
-BIN_TARGET="/usr/local/bin/pr-rag"
+BIN_DIR="$HOME/.local/bin"
+BIN_TARGET="$BIN_DIR/pr-rag"
 
-echo -e "${YELLOW}1. Mengunduh & menyiapkan app di ${INSTALL_DIR}...${NC}"
+echo -e "${YELLOW}1. Menyiapkan direktori di ${INSTALL_DIR}...${NC}"
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
+mkdir -p "$BIN_DIR"
 
 if command -v git >/dev/null 2>&1; then
     git clone --depth=1 https://github.com/jagoankode/rag-pr-reviewer.git "$INSTALL_DIR" --quiet
@@ -47,35 +49,36 @@ fi
 echo -e "${YELLOW}2. Menginstall runtime dependencies lokal...${NC}"
 (
     cd "$INSTALL_DIR"
-    # Pastikan pakai official npmjs registry, bukan internal mirror
     npm install --omit=dev --loglevel=error --no-audit --no-fund --registry=https://registry.npmjs.org
 )
 
-echo -e "${YELLOW}3. Membuat executable launcher di /usr/local/bin/pr-rag...${NC}"
-
-# Buat script launcher
-LAUNCHER_CONTENT="#!/usr/bin/env bash
-exec \"$NODE_PATH\" \"$INSTALL_DIR/dist/index.js\" \"\$@\""
-
-TMP_LAUNCHER=$(mktemp)
-echo "$LAUNCHER_CONTENT" > "$TMP_LAUNCHER"
-chmod +x "$TMP_LAUNCHER"
-
-# Coba pasang di /usr/local/bin (standar $PATH semua Linux/macOS/WSL)
-if [ -w "/usr/local/bin" ]; then
-    mv "$TMP_LAUNCHER" "$BIN_TARGET"
-elif command -v sudo >/dev/null 2>&1; then
-    echo -e "${CYAN}Membutuhkan izin sudo untuk memasang ke /usr/local/bin agar langsung aktif di PATH...${NC}"
-    sudo mv "$TMP_LAUNCHER" "$BIN_TARGET"
-    sudo chmod +x "$BIN_TARGET"
-else
-    # Fallback ke ~/.local/bin jika tidak ada akses sudo
-    mkdir -p "$HOME/.local/bin"
-    mv "$TMP_LAUNCHER" "$HOME/.local/bin/pr-rag"
-    chmod +x "$HOME/.local/bin/pr-rag"
-    BIN_TARGET="$HOME/.local/bin/pr-rag"
+echo -e "${YELLOW}3. Memasang binary pr-rag ke ${BIN_TARGET}...${NC}"
+cat << 'EOF' > "$BIN_TARGET"
+#!/usr/bin/env bash
+NODE_EXEC=$(command -v node)
+if [ -z "$NODE_EXEC" ]; then
+    echo "Error: Node.js runtime not found." >&2
+    exit 1
 fi
+exec "$NODE_EXEC" "$HOME/.pr-rag/app/dist/index.js" "$@"
+EOF
 
-echo -e "\n${GREEN}✔ Instalasi berhasil selesai!${NC}"
+chmod +x "$BIN_TARGET"
+
+# 4. Pastikan ~/.local/bin masuk ke shell config (.zshrc / .bashrc) jika belum ada
+detect_and_add_path() {
+    local rc_file="$1"
+    if [ -f "$rc_file" ]; then
+        if ! grep -q '\.local/bin' "$rc_file"; then
+            echo -e "\n# Added by pr-rag installer\nexport PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$rc_file"
+            echo -e "${CYAN}Menambahkan ~/.local/bin ke ${rc_file}${NC}"
+        fi
+    fi
+}
+
+detect_and_add_path "$HOME/.zshrc"
+detect_and_add_path "$HOME/.bashrc"
+
+echo -e "\n${GREEN}✔ Instalasi selesai tanpa sudo!${NC}"
 echo -e "Binary terpasang di: ${CYAN}$BIN_TARGET${NC}"
-echo -e "Cukup ketik ${GREEN}pr-rag${NC} di terminal manapun untuk langsung membuka TUI.\n"
+echo -e "Jalankan: ${YELLOW}source ~/.zshrc${NC} (atau buka tab baru), lalu ketik: ${GREEN}pr-rag${NC}\n"
