@@ -1,9 +1,9 @@
 import * as lancedb from '@lancedb/lancedb';
 import { embed, embedMany } from 'ai';
-import { openai } from '@ai-sdk/openai';
 import path from 'path';
 import os from 'os';
 import { DocChunk } from './chunker.js';
+import { getActiveAIProvider } from './config.js';
 
 const DB_DIR = path.join(os.homedir(), '.pr-rag', 'db');
 const TABLE_NAME = 'guidelines';
@@ -27,16 +27,18 @@ export async function getDb(): Promise<lancedb.Connection> {
 }
 
 /**
- * Ingest chunk dokumen ke LanceDB dengan OpenAI embedding text-embedding-3-small
+ * Ingest chunk dokumen ke LanceDB dengan active embedding model
  */
 export async function insertChunks(chunks: DocChunk[]): Promise<number> {
   if (chunks.length === 0) return 0;
 
   const db = await getDb();
-  
+  const { client, config } = await getActiveAIProvider();
+  const embModel = config.embeddingModel || 'text-embedding-3-small';
+
   // Buat embeddings
   const { embeddings } = await embedMany({
-    model: openai.embedding('text-embedding-3-small'),
+    model: client.embedding(embModel),
     values: chunks.map((c) => `${c.title}\n${c.content}`),
   });
 
@@ -74,10 +76,12 @@ export async function searchRelevantGuidelines(
   }
 
   const table = await db.openTable(TABLE_NAME);
-  
+  const { client, config } = await getActiveAIProvider();
+  const embModel = config.embeddingModel || 'text-embedding-3-small';
+
   // Embed query
   const { embedding } = await embed({
-    model: openai.embedding('text-embedding-3-small'),
+    model: client.embedding(embModel),
     value: query.slice(0, 4000), // Batasi query embedding
   });
 

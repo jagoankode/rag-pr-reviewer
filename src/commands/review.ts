@@ -1,12 +1,12 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { generateObject } from 'ai';
-import { openai } from '@ai-sdk/openai';
 import { isGitRepo, getGitDiff } from '../core/git.js';
 import { annotateDiffWithLineNumbers } from '../core/diff-parser.js';
 import { searchRelevantGuidelines } from '../core/db.js';
 import { buildLineReviewPrompt } from '../core/prompt.js';
-import { PRReviewResultSchema, PRReviewResult, LineViolation } from '../core/schema.js';
+import { getActiveAIProvider } from '../core/config.js';
+import { PRReviewResultSchema, PRReviewResult } from '../core/schema.js';
 
 export interface ReviewOptions {
   staged?: boolean;
@@ -48,7 +48,6 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     spinner.text = chalk.cyan(`Mencari aturan coding terkait dari LanceDB (${files.length} file diubah)...`);
     let relevantRules: string[] = [];
     try {
-      // Cari konteks aturan berdasarkan diff
       const chunks = await searchRelevantGuidelines(rawDiff, options.limit || 7);
       relevantRules = chunks.map((c) => `[Source: ${c.title}]\n${c.content}`);
       if (relevantRules.length > 0) {
@@ -60,14 +59,14 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
       spinner.info(chalk.gray('Vector store belum diinisialisasi atau kosong. Melanjutkan review umum.'));
     }
 
-    const modelName = options.model || 'gpt-4o';
+    const { client, config } = await getActiveAIProvider();
+    const modelName = options.model || config.defaultModel || 'gpt-4o';
     spinner.start(chalk.magenta(`Menganalisis pelanggaran baris per baris via AI (${modelName})...`));
 
     const prompt = buildLineReviewPrompt(annotatedText, relevantRules);
 
-    // Menghasilkan output terstruktur (Structured Outputs) sesuai skema LineViolation
     const { object: reviewResult } = await generateObject({
-      model: openai(modelName),
+      model: client(modelName),
       schema: PRReviewResultSchema,
       prompt: prompt,
     });
@@ -79,7 +78,6 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
       return reviewResult;
     }
 
-    // Render output bergaya PR Review Comment
     printReviewTerminalReport(reviewResult);
 
     return reviewResult;
@@ -106,7 +104,7 @@ function printReviewTerminalReport(result: PRReviewResult) {
   } else {
     console.log(chalk.bold.red(`🚨 Line-by-Line Violations & PR Comments (${result.violations.length}):\n`));
 
-    result.violations.forEach((v, index) => {
+    result.violations.forEach((v) => {
       const tag =
         v.severity === 'error'
           ? chalk.bgRed.white.bold(' ERROR ')
