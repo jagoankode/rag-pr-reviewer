@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import dotenv from 'dotenv';
 import { ingestCommand } from './commands/ingest.js';
 import { reviewCommand } from './commands/review.js';
+import { runInteractiveTUI } from './commands/tui.js';
 
 dotenv.config();
 
@@ -11,7 +12,18 @@ const program = new Command();
 program
   .name('pr-rag')
   .description(chalk.cyan('AI-powered local Pull Request reviewer using embedded RAG (LanceDB) & Line-by-Line Convention Audit'))
-  .version('1.1.0');
+  .version('1.2.0')
+  .action(async () => {
+    // Jalankan mode interaktif TUI jika dipanggil tanpa sub-perintah (cth: `pr-rag` langsung)
+    await runInteractiveTUI();
+  });
+
+program
+  .command('ui')
+  .description('Launch the interactive Terminal User Interface (TUI)')
+  .action(async () => {
+    await runInteractiveTUI();
+  });
 
 program
   .command('ingest')
@@ -34,3 +46,4 @@ program
   });
 
 program.parse(process.argv);
+

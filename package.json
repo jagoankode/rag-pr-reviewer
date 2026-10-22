@@ -30,8 +30,10 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.100",
+    "@inquirer/prompts": "^8.7.4",
     "@lancedb/lancedb": "^0.40.0",
     "ai": "^7.0.149",
+    "boxen": "^9.0.0",
     "chalk": "^6.0.1",
     "commander": "^15.0.0",
     "dotenv": "^18.0.9",
