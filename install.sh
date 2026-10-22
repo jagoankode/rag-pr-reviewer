@@ -53,6 +53,10 @@ echo -e "${YELLOW}2. Menginstall runtime dependencies lokal...${NC}"
 )
 
 echo -e "${YELLOW}3. Memasang binary pr-rag ke ${BIN_TARGET}...${NC}"
+
+# Hapus symlink lama atau broken symlink dari npm sebelumnya jika ada
+rm -f "$BIN_TARGET"
+
 cat << 'EOF' > "$BIN_TARGET"
 #!/usr/bin/env bash
 NODE_EXEC=$(command -v node)
