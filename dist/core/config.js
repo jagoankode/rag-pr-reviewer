@@ -18,6 +18,7 @@ const DEFAULT_CONFIG = {
     baseUrl: '',
     defaultModel: 'gpt-4o',
     embeddingModel: 'text-embedding-3-small',
+    defaultReportDir: '.rag-reviews',
 };
 async function loadConfig() {
     try {
@@ -26,7 +27,6 @@ async function loadConfig() {
         return { ...DEFAULT_CONFIG, ...parsed };
     }
     catch {
-        // Fallback ke environment variables jika ada
         const envApiKey = process.env.OPENAI_API_KEY || '';
         const envBaseUrl = process.env.OPENAI_BASE_URL || '';
         return {
@@ -45,7 +45,6 @@ async function saveConfig(config) {
  */
 async function getActiveAIProvider() {
     const config = await loadConfig();
-    // Environment variable tetap punya prioritas tertinggi jika dipasang runtime
     const apiKey = process.env.OPENAI_API_KEY || config.apiKey;
     const baseURL = process.env.OPENAI_BASE_URL || config.baseUrl || undefined;
     if (!apiKey && config.provider !== 'ollama') {

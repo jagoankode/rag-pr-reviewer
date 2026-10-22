@@ -5,7 +5,7 @@ import { ingestCommand } from './ingest.js';
 import { reviewCommand } from './review.js';
 import { isGitRepo, getAvailableBranches, getCurrentBranch } from '../core/git.js';
 import { loadConfig, saveConfig, AppConfig } from '../core/config.js';
-import { listSavedReports } from '../core/history.js';
+import { listSavedReports, resolveReportDir } from '../core/history.js';
 import { marked } from 'marked';
 import { promises as fs } from 'fs';
 
@@ -48,7 +48,7 @@ export async function runInteractiveTUI() {
           value: 'ingest',
         },
         {
-          name: '📜 View Review History (.rag-reviews)',
+          name: '📜 View Review History',
           value: 'history',
         },
         {
@@ -74,7 +74,7 @@ export async function runInteractiveTUI() {
     if (choice === 'config_ai') {
       await configureAIProviderUI(config);
     } else if (choice === 'history') {
-      await viewHistoryUI();
+      await viewHistoryUI(config.defaultReportDir || '.rag-reviews');
     } else if (choice === 'ingest') {
       const docPath = await input({
         message: 'Masukkan path file/folder panduan markdown:',
@@ -111,7 +111,6 @@ export async function runInteractiveTUI() {
       let doFetch = false;
 
       if (diffType === 'pr_branches') {
-        // Tanya apakah ingin git fetch remote terlebih dahulu
         doFetch = await confirm({
           message: 'Fetch branch remote terbaru dari origin terlebih dahulu (git fetch --all)?',
           default: true,
@@ -120,7 +119,6 @@ export async function runInteractiveTUI() {
         const { local, remote } = await getAvailableBranches();
         const allBranches = Array.from(new Set([...local, ...remote]));
 
-        // Target / Base Branch (e.g. main, origin/main, master, develop)
         const defaultTarget = allBranches.includes('origin/main')
           ? 'origin/main'
           : allBranches.includes('main')
@@ -133,7 +131,6 @@ export async function runInteractiveTUI() {
           validate: (val) => (val.trim().length > 0 ? true : 'Target branch tidak boleh kosong'),
         });
 
-        // Source / Head Branch (e.g. current branch, origin/feature-xxx)
         const defaultSource = currentBranch !== 'HEAD' ? currentBranch : (allBranches[0] || 'HEAD');
         sourceBranch = await input({
           message: 'Source/Feature Branch (cabang yang mau direview, misal: feature-a, origin/feature-a):',
@@ -141,6 +138,14 @@ export async function runInteractiveTUI() {
           validate: (val) => (val.trim().length > 0 ? true : 'Source branch tidak boleh kosong'),
         });
       }
+
+      // Konfigurasi output directory penyimpanan report markdown
+      const defaultDir = config.defaultReportDir || '.rag-reviews';
+      const outputDir = await input({
+        message: 'Folder penyimpanan laporan Markdown review:',
+        default: defaultDir,
+        validate: (val) => (val.trim().length > 0 ? true : 'Folder tidak boleh kosong'),
+      });
 
       const defaultModel = config.defaultModel || 'ag/gemini-3.8-flash';
       const model = await select<string>({
@@ -167,15 +172,17 @@ export async function runInteractiveTUI() {
         source: sourceBranch,
         fetchRemote: doFetch,
         model: selectedModel,
+        outputDir: outputDir,
         saveReport: true,
       });
       console.log('');
     } else if (choice === 'status') {
       const currentBranch = inRepo ? await getCurrentBranch() : '-';
+      const reportDir = resolveReportDir(config.defaultReportDir || '.rag-reviews');
       console.log(chalk.cyan('\n─── Status RAG Reviewer ───'));
       console.log(`Git Repo Active : ${inRepo ? chalk.green(`Yes (Current Branch: ${currentBranch})`) : chalk.red('No')}`);
       console.log(`Vector DB Path  : ${chalk.yellow('~/.pr-rag/db')}`);
-      console.log(`History Reports : ${chalk.yellow('./.rag-reviews/*.md')}`);
+      console.log(`Report Dir      : ${chalk.yellow(reportDir)}`);
       console.log(`AI Provider     : ${chalk.bold.magenta(config.provider)}`);
       console.log(`Base URL        : ${config.baseUrl || chalk.gray('(Default OpenAI)')}`);
       console.log(`Default Model   : ${chalk.cyan(config.defaultModel)}`);
@@ -197,10 +204,17 @@ export async function runInteractiveTUI() {
   }
 }
 
-async function viewHistoryUI() {
-  const reports = await listSavedReports();
+async function viewHistoryUI(defaultDir: string = '.rag-reviews') {
+  const customDir = await input({
+    message: 'Folder laporan markdown yang ingin dibuka:',
+    default: defaultDir,
+  });
+
+  const resolved = resolveReportDir(customDir);
+  const reports = await listSavedReports(resolved);
+
   if (reports.length === 0) {
-    console.log(chalk.yellow('\nBelum ada history review yang tersimpan di .rag-reviews/\n'));
+    console.log(chalk.yellow(`\nBelum ada history review yang tersimpan di ${resolved}\n`));
     return;
   }
 
@@ -248,10 +262,10 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
       default: currentConfig.baseUrl || 'https://api.9router.com/v1',
     });
     defaultModel = await input({
-      message: 'Default Model (contoh: ag/gemini-3.8-flash, ag/gpt-4o):',
+      message: 'Default Model (contoh: ag/gemini-3.8-flash, cx/gpt-6-astra):',
       default: currentConfig.defaultModel || 'ag/gemini-3.8-flash',
     });
-    embeddingModel = 'local'; // 9router otomatis pakai local TF-IDF vectorizer
+    embeddingModel = 'local';
   } else if (provider === 'openai') {
     baseUrl = '';
     defaultModel = await input({
@@ -299,14 +313,20 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
     }
   }
 
+  const defaultReportDir = await input({
+    message: 'Default folder simpan laporan review markdown:',
+    default: currentConfig.defaultReportDir || '.rag-reviews',
+  });
+
   const newConfig: AppConfig = {
     provider,
     apiKey,
     baseUrl,
     defaultModel,
     embeddingModel,
+    defaultReportDir,
   };
 
   await saveConfig(newConfig);
-  console.log(chalk.green(`\n✔ Konfigurasi AI Provider (${provider}) berhasil disimpan ke ~/.pr-rag/config.json!\n`));
+  console.log(chalk.green(`\n✔ Konfigurasi berhasil disimpan ke ~/.pr-rag/config.json!\n`));
 }

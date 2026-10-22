@@ -9,6 +9,7 @@ export interface AppConfig {
   baseUrl?: string;
   defaultModel: string;
   embeddingModel?: string;
+  defaultReportDir?: string; // Default directory untuk simpan laporan markdown
 }
 
 const CONFIG_DIR = path.join(os.homedir(), '.pr-rag');
@@ -20,6 +21,7 @@ const DEFAULT_CONFIG: AppConfig = {
   baseUrl: '',
   defaultModel: 'gpt-4o',
   embeddingModel: 'text-embedding-3-small',
+  defaultReportDir: '.rag-reviews',
 };
 
 export async function loadConfig(): Promise<AppConfig> {
@@ -28,7 +30,6 @@ export async function loadConfig(): Promise<AppConfig> {
     const parsed = JSON.parse(data);
     return { ...DEFAULT_CONFIG, ...parsed };
   } catch {
-    // Fallback ke environment variables jika ada
     const envApiKey = process.env.OPENAI_API_KEY || '';
     const envBaseUrl = process.env.OPENAI_BASE_URL || '';
     return {
@@ -50,7 +51,6 @@ export async function saveConfig(config: AppConfig): Promise<void> {
 export async function getActiveAIProvider() {
   const config = await loadConfig();
 
-  // Environment variable tetap punya prioritas tertinggi jika dipasang runtime
   const apiKey = process.env.OPENAI_API_KEY || config.apiKey;
   const baseURL = process.env.OPENAI_BASE_URL || config.baseUrl || undefined;
 

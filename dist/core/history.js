@@ -3,19 +3,28 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.resolveReportDir = resolveReportDir;
 exports.formatReportToMarkdown = formatReportToMarkdown;
 exports.saveReviewReport = saveReviewReport;
 exports.listSavedReports = listSavedReports;
 const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
+const os_1 = __importDefault(require("os"));
+function resolveReportDir(dirInput) {
+    let cleaned = (dirInput || '.rag-reviews').trim();
+    if (cleaned.startsWith('~/') || cleaned === '~') {
+        cleaned = path_1.default.join(os_1.default.homedir(), cleaned.slice(1));
+    }
+    return path_1.default.isAbsolute(cleaned) ? cleaned : path_1.default.resolve(process.cwd(), cleaned);
+}
 /**
- * Mengubah PRReviewResult menjadi dokumen Markdown yang rapi dan terstruktur
+ * Mengubah PRReviewResult menjadi dokumen Markdown murni (100% Plain Markdown, tanpa tag HTML)
  */
 function formatReportToMarkdown(result, options = {}) {
     const dateStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
     let targetLabel = 'Uncommitted working directory changes';
     if (options.sourceBranch && options.targetBranch) {
-        targetLabel = `PR Diff: \`${options.targetBranch}\` ⟵ \`${options.sourceBranch}\``;
+        targetLabel = `PR Diff: \`${options.targetBranch}\` <- \`${options.sourceBranch}\``;
     }
     else if (options.branch) {
         targetLabel = `Branch Diff: \`${options.branch}\``;
@@ -23,42 +32,45 @@ function formatReportToMarkdown(result, options = {}) {
     else if (options.staged) {
         targetLabel = 'Staged changes (`--staged`)';
     }
-    const statusBadge = result.status === 'APPROVE'
-        ? '🟢 **APPROVE (LGTM)**'
+    const statusLabel = result.status === 'APPROVE'
+        ? '**APPROVE (LGTM)**'
         : result.status === 'REQUEST_CHANGES'
-            ? '🔴 **REQUEST CHANGES**'
-            : '🟡 **COMMENT**';
-    let md = `# 📋 Pull Request Review Report
+            ? '**REQUEST CHANGES**'
+            : '**COMMENT**';
+    let md = `# Pull Request Review Report
 
 - **Date:** ${dateStr}
 - **Target:** ${targetLabel}
-- **Status:** ${statusBadge}
+- **Status:** ${statusLabel}
 - **Model:** \`${options.model || 'default'}\`
 
 ---
 
-## 📌 Executive Summary
+## Executive Summary
+
 ${result.summary}
 
 ---
 
-## 🚨 Line-by-Line Code Convention Violations (${result.violations.length})
+## Line-by-Line Code Convention Violations (${result.violations.length})
 `;
     if (result.violations.length === 0) {
-        md += `\n> ✨ *Tidak ada pelanggaran convention yang ditemukan pada baris yang diubah.*\n`;
+        md += `\n*Tidak ada pelanggaran code convention yang ditemukan pada baris yang diubah.*\n`;
     }
     else {
         result.violations.forEach((v, index) => {
-            const severityIcon = v.severity === 'error' ? '🔴 **ERROR**' : v.severity === 'warning' ? '🟡 **WARN**' : '🔵 **INFO**';
+            const severity = v.severity.toUpperCase();
             md += `
 ### ${index + 1}. \`${v.file}\` (Line ${v.line})
-- **Severity:** ${severityIcon}
+
+- **Severity:** [${severity}]
 - **Rule:** \`${v.rule}\`
 - **Comment:** ${v.comment}
 `;
             if (v.suggestedFix) {
                 md += `
 **Suggested Fix:**
+
 \`\`\`typescript
 ${v.suggestedFix}
 \`\`\`
@@ -68,19 +80,19 @@ ${v.suggestedFix}
         });
     }
     if (result.generalFeedback && result.generalFeedback.length > 0) {
-        md += `\n## 💡 General Architecture Notes\n`;
+        md += `\n## General Architecture Notes\n\n`;
         result.generalFeedback.forEach((note) => {
             md += `- ${note}\n`;
         });
     }
-    md += `\n\n*Generated locally with [pr-rag](https://github.com/jagoankode/rag-pr-reviewer)*\n`;
+    md += `\n\n*Generated locally with pr-rag (https://github.com/jagoankode/rag-pr-reviewer)*\n`;
     return md;
 }
 /**
  * Menyimpan report markdown ke direktori proyek lokal
  */
 async function saveReviewReport(result, options = {}) {
-    const dir = options.outputDir || path_1.default.join(process.cwd(), '.rag-reviews');
+    const dir = resolveReportDir(options.outputDir);
     await fs_1.promises.mkdir(dir, { recursive: true });
     let safeName = 'local';
     if (options.sourceBranch && options.targetBranch) {
@@ -104,7 +116,7 @@ async function saveReviewReport(result, options = {}) {
  * Mengambil daftar history report review yang tersimpan
  */
 async function listSavedReports(dirPath) {
-    const dir = dirPath || path_1.default.join(process.cwd(), '.rag-reviews');
+    const dir = resolveReportDir(dirPath);
     try {
         const files = await fs_1.promises.readdir(dir);
         const mdFiles = files.filter((f) => f.endsWith('.md'));

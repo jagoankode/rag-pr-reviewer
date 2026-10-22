@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import path from 'path';
+import os from 'os';
 import { PRReviewResult } from './schema.js';
 
 export interface SaveReportOptions {
@@ -11,64 +12,74 @@ export interface SaveReportOptions {
   outputDir?: string;
 }
 
+export function resolveReportDir(dirInput?: string): string {
+  let cleaned = (dirInput || '.rag-reviews').trim();
+  if (cleaned.startsWith('~/') || cleaned === '~') {
+    cleaned = path.join(os.homedir(), cleaned.slice(1));
+  }
+  return path.isAbsolute(cleaned) ? cleaned : path.resolve(process.cwd(), cleaned);
+}
+
 /**
- * Mengubah PRReviewResult menjadi dokumen Markdown yang rapi dan terstruktur
+ * Mengubah PRReviewResult menjadi dokumen Markdown murni (100% Plain Markdown, tanpa tag HTML)
  */
 export function formatReportToMarkdown(
   result: PRReviewResult,
   options: SaveReportOptions = {}
 ): string {
   const dateStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-  
+
   let targetLabel = 'Uncommitted working directory changes';
   if (options.sourceBranch && options.targetBranch) {
-    targetLabel = `PR Diff: \`${options.targetBranch}\` ⟵ \`${options.sourceBranch}\``;
+    targetLabel = `PR Diff: \`${options.targetBranch}\` <- \`${options.sourceBranch}\``;
   } else if (options.branch) {
     targetLabel = `Branch Diff: \`${options.branch}\``;
   } else if (options.staged) {
     targetLabel = 'Staged changes (`--staged`)';
   }
 
-  const statusBadge =
+  const statusLabel =
     result.status === 'APPROVE'
-      ? '🟢 **APPROVE (LGTM)**'
+      ? '**APPROVE (LGTM)**'
       : result.status === 'REQUEST_CHANGES'
-      ? '🔴 **REQUEST CHANGES**'
-      : '🟡 **COMMENT**';
+      ? '**REQUEST CHANGES**'
+      : '**COMMENT**';
 
-  let md = `# 📋 Pull Request Review Report
+  let md = `# Pull Request Review Report
 
 - **Date:** ${dateStr}
 - **Target:** ${targetLabel}
-- **Status:** ${statusBadge}
+- **Status:** ${statusLabel}
 - **Model:** \`${options.model || 'default'}\`
 
 ---
 
-## 📌 Executive Summary
+## Executive Summary
+
 ${result.summary}
 
 ---
 
-## 🚨 Line-by-Line Code Convention Violations (${result.violations.length})
+## Line-by-Line Code Convention Violations (${result.violations.length})
 `;
 
   if (result.violations.length === 0) {
-    md += `\n> ✨ *Tidak ada pelanggaran convention yang ditemukan pada baris yang diubah.*\n`;
+    md += `\n*Tidak ada pelanggaran code convention yang ditemukan pada baris yang diubah.*\n`;
   } else {
     result.violations.forEach((v, index) => {
-      const severityIcon =
-        v.severity === 'error' ? '🔴 **ERROR**' : v.severity === 'warning' ? '🟡 **WARN**' : '🔵 **INFO**';
+      const severity = v.severity.toUpperCase();
 
       md += `
 ### ${index + 1}. \`${v.file}\` (Line ${v.line})
-- **Severity:** ${severityIcon}
+
+- **Severity:** [${severity}]
 - **Rule:** \`${v.rule}\`
 - **Comment:** ${v.comment}
 `;
       if (v.suggestedFix) {
         md += `
 **Suggested Fix:**
+
 \`\`\`typescript
 ${v.suggestedFix}
 \`\`\`
@@ -79,13 +90,13 @@ ${v.suggestedFix}
   }
 
   if (result.generalFeedback && result.generalFeedback.length > 0) {
-    md += `\n## 💡 General Architecture Notes\n`;
+    md += `\n## General Architecture Notes\n\n`;
     result.generalFeedback.forEach((note) => {
       md += `- ${note}\n`;
     });
   }
 
-  md += `\n\n*Generated locally with [pr-rag](https://github.com/jagoankode/rag-pr-reviewer)*\n`;
+  md += `\n\n*Generated locally with pr-rag (https://github.com/jagoankode/rag-pr-reviewer)*\n`;
   return md;
 }
 
@@ -96,7 +107,7 @@ export async function saveReviewReport(
   result: PRReviewResult,
   options: SaveReportOptions = {}
 ): Promise<string> {
-  const dir = options.outputDir || path.join(process.cwd(), '.rag-reviews');
+  const dir = resolveReportDir(options.outputDir);
   await fs.mkdir(dir, { recursive: true });
 
   let safeName = 'local';
@@ -123,7 +134,7 @@ export async function saveReviewReport(
  * Mengambil daftar history report review yang tersimpan
  */
 export async function listSavedReports(dirPath?: string): Promise<{ filename: string; fullPath: string; date: Date }[]> {
-  const dir = dirPath || path.join(process.cwd(), '.rag-reviews');
+  const dir = resolveReportDir(dirPath);
   try {
     const files = await fs.readdir(dir);
     const mdFiles = files.filter((f) => f.endsWith('.md'));
