@@ -3,15 +3,24 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.resolveUserPath = resolveUserPath;
 exports.ingestCommand = ingestCommand;
 const chalk_1 = __importDefault(require("chalk"));
 const ora_1 = __importDefault(require("ora"));
 const path_1 = __importDefault(require("path"));
+const os_1 = __importDefault(require("os"));
 const fs_1 = require("fs");
 const chunker_js_1 = require("../core/chunker.js");
 const db_js_1 = require("../core/db.js");
+function resolveUserPath(inputPath) {
+    let cleaned = inputPath.trim();
+    if (cleaned.startsWith('~/') || cleaned === '~') {
+        cleaned = path_1.default.join(os_1.default.homedir(), cleaned.slice(1));
+    }
+    return path_1.default.resolve(process.cwd(), cleaned);
+}
 async function ingestCommand(targetPath) {
-    const resolvedPath = path_1.default.resolve(process.cwd(), targetPath);
+    const resolvedPath = resolveUserPath(targetPath);
     const spinner = (0, ora_1.default)(chalk_1.default.blue(`Scanning files at: ${resolvedPath}...`)).start();
     try {
         const files = await (0, chunker_js_1.scanDocFiles)(resolvedPath);

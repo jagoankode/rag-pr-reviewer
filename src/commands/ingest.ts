@@ -1,12 +1,21 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import path from 'path';
+import os from 'os';
 import { promises as fs } from 'fs';
 import { scanDocFiles, chunkMarkdown } from '../core/chunker.js';
 import { insertChunks } from '../core/db.js';
 
+export function resolveUserPath(inputPath: string): string {
+  let cleaned = inputPath.trim();
+  if (cleaned.startsWith('~/') || cleaned === '~') {
+    cleaned = path.join(os.homedir(), cleaned.slice(1));
+  }
+  return path.resolve(process.cwd(), cleaned);
+}
+
 export async function ingestCommand(targetPath: string) {
-  const resolvedPath = path.resolve(process.cwd(), targetPath);
+  const resolvedPath = resolveUserPath(targetPath);
   const spinner = ora(chalk.blue(`Scanning files at: ${resolvedPath}...`)).start();
 
   try {
