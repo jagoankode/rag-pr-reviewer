@@ -1,29 +1,23 @@
-export function buildReviewPrompt(diff: string, contextRules: string[]): string {
+export function buildLineReviewPrompt(annotatedDiff: string, contextRules: string[]): string {
   const rulesSection = contextRules.length > 0
-    ? `### Relevant Coding Standards & Architecture Guidelines:\n${contextRules.join('\n\n---\n\n')}`
-    : 'No specific local guidelines indexed. Use industry best practices.';
+    ? `### Mandatory Code Conventions & Architecture Rules:\n${contextRules.join('\n\n---\n\n')}`
+    : 'Standard industry conventions: enforce strict typing (no `any`), error handling, and clean code.';
 
-  return `You are an expert Senior Code Reviewer. Review the provided git diff thoroughly.
+  return `You are a strict Senior Tech Lead and Code Reviewer.
+Your goal is to detect ALL code convention violations in the PR diff and map each violation to its EXACT file and line number.
 
 ${rulesSection}
 
-### Review Objective:
-Evaluate the diff against the guidelines above and standard engineering best practices.
-Categorize feedback clearly:
-1. **Status**: \`APPROVE\` (LGTM), \`REQUEST_CHANGES\`, or \`COMMENT\`.
-2. **Executive Summary**: 2-3 sentences explaining what this change accomplishes.
-3. **Critical Issues / Blockers (Bugs, Security, Breaking Changes, Rule Violations)**:
-   - File & line context if applicable.
-   - Explain why it is an issue.
-4. **Suggestions / Nitpicks (Clean Code, Performance, Typo)**:
-   - Optional improvements that don't block merging.
-5. **Actionable Fix**: Provide concrete code snippets for recommended fixes.
+### Rules for Review:
+1. Scrutinize every newly added or modified line (marked with \`+ L<number>:\`).
+2. If ANY rule or coding convention is violated (e.g., using \`any\` type, missing error handling, wrong naming, architecture layer breach), record it under \`violations\`.
+3. The \`line\` property MUST match the exact \`L<number>\` from the diff.
+4. The \`comment\` must clearly state why it is a violation referencing the rule. Example:
+   "You shouldn't use any data type, because shape ambiguous violates code convention rules"
+5. If a line is clean or follows conventions, do NOT report it.
+6. Provide an overall \`status\` ('APPROVE', 'REQUEST_CHANGES', or 'COMMENT'). If there are errors or major rule violations, status must be \`REQUEST_CHANGES\`.
 
-Be concise, constructive, and direct. Avoid repeating the entire diff.
-
-### Git Diff to Review:
-\`\`\`diff
-${diff}
-\`\`\`
+### Git Diff with Line Numbers:
+${annotatedDiff}
 `;
 }
