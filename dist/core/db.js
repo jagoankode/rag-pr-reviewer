@@ -44,6 +44,7 @@ const ai_1 = require("ai");
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
 const config_js_1 = require("./config.js");
+const local_embedder_js_1 = require("./local-embedder.js");
 const DB_DIR = path_1.default.join(os_1.default.homedir(), '.pr-rag', 'db');
 const TABLE_NAME = 'guidelines';
 let dbInstance = null;
@@ -54,34 +55,53 @@ async function getDb() {
     return dbInstance;
 }
 /**
- * Ingest chunk dokumen ke LanceDB dengan active embedding model
+ * Generate embeddings: coba via API provider dulu,
+ * jika provider tidak punya endpoint embedding (seperti 9router/chat-only gateway),
+ * fallback otomatis ke high-speed local embedding vectorizer (Zero-Failure).
+ */
+async function generateVectors(texts) {
+    const { client, config } = await (0, config_js_1.getActiveAIProvider)();
+    const embModel = config.embeddingModel || 'text-embedding-3-small';
+    // Jika provider adalah 9router atau model yang tidak punya embedding endpoint
+    if (config.provider === '9router' || embModel === 'local') {
+        const vectorizer = (0, local_embedder_js_1.createTfIdfIndex)(texts);
+        return texts.map((t) => vectorizer(t));
+    }
+    try {
+        const { embeddings } = await (0, ai_1.embedMany)({
+            model: client.embedding(embModel),
+            values: texts,
+        });
+        return embeddings;
+    }
+    catch (err) {
+        // Fallback otomatis ke local semantic vectorizer jika API provider menolak / tidak support embedding
+        const vectorizer = (0, local_embedder_js_1.createTfIdfIndex)(texts);
+        return texts.map((t) => vectorizer(t));
+    }
+}
+/**
+ * Ingest chunk dokumen ke LanceDB
  */
 async function insertChunks(chunks) {
     if (chunks.length === 0)
         return 0;
     const db = await getDb();
-    const { client, config } = await (0, config_js_1.getActiveAIProvider)();
-    const embModel = config.embeddingModel || 'text-embedding-3-small';
-    // Buat embeddings
-    const { embeddings } = await (0, ai_1.embedMany)({
-        model: client.embedding(embModel),
-        values: chunks.map((c) => `${c.title}\n${c.content}`),
-    });
+    const texts = chunks.map((c) => `${c.title}\n${c.content}`);
+    const vectors = await generateVectors(texts);
     const records = chunks.map((chunk, i) => ({
         id: chunk.id,
         source: chunk.source,
         title: chunk.title,
         content: chunk.content,
-        vector: embeddings[i],
+        vector: vectors[i],
     }));
     const tableNames = await db.tableNames();
     if (tableNames.includes(TABLE_NAME)) {
-        const table = await db.openTable(TABLE_NAME);
-        await table.add(records);
+        // Drop dan replace table agar dimensi vector selalu sinkron dan fresh
+        await db.dropTable(TABLE_NAME);
     }
-    else {
-        await db.createTable(TABLE_NAME, records);
-    }
+    await db.createTable(TABLE_NAME, records);
     return records.length;
 }
 /**
@@ -94,15 +114,33 @@ async function searchRelevantGuidelines(query, limit = 5) {
         return [];
     }
     const table = await db.openTable(TABLE_NAME);
+    const rows = await table.query().toArray();
+    if (rows.length === 0)
+        return [];
+    // Ambil semua corpus untuk membangun vectorizer query yang cocok
+    const corpus = rows.map((r) => `${r.title}\n${r.content}`);
     const { client, config } = await (0, config_js_1.getActiveAIProvider)();
     const embModel = config.embeddingModel || 'text-embedding-3-small';
-    // Embed query
-    const { embedding } = await (0, ai_1.embed)({
-        model: client.embedding(embModel),
-        value: query.slice(0, 4000), // Batasi query embedding
-    });
+    let queryVector;
+    if (config.provider === '9router' || embModel === 'local') {
+        const vectorizer = (0, local_embedder_js_1.createTfIdfIndex)(corpus);
+        queryVector = vectorizer(query.slice(0, 4000));
+    }
+    else {
+        try {
+            const { embedding } = await (0, ai_1.embed)({
+                model: client.embedding(embModel),
+                value: query.slice(0, 4000),
+            });
+            queryVector = embedding;
+        }
+        catch {
+            const vectorizer = (0, local_embedder_js_1.createTfIdfIndex)(corpus);
+            queryVector = vectorizer(query.slice(0, 4000));
+        }
+    }
     const results = await table
-        .vectorSearch(embedding)
+        .vectorSearch(queryVector)
         .limit(limit)
         .toArray();
     return results.map((row) => ({
