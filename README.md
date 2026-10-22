@@ -11,11 +11,16 @@ Detects code convention violations and produces actionable, line-by-line PR comm
 - **🚀 100% Local Execution**: Runs entirely on your machine. Zero external servers or Docker required.
 - **📚 Embedded RAG Engine**: Indexes internal team standards, guidelines, and architecture rules locally via LanceDB (`~/.pr-rag/db`).
 - **📍 Precise Line-Level Audit**: Identifies exact files and line numbers (`file.ts : line 20`) violating conventions.
+- **🤖 Multi-Provider AI Support (Configurable in TUI)**:
+  - **9router** (Gateway `ag/gemini-3.8-flash`, `ag/gpt-4o`, etc.)
+  - **OpenAI Official** (`gpt-4o`, `o3`, etc.)
+  - **OpenRouter** (`anthropic/claude-3.5-sonnet`, etc.)
+  - **Ollama** (Local LLM `qwen2.5-coder`, `deepseek-coder`, etc.)
+  - **Custom OpenAI-Compatible Provider**
 - **🖥️ Dual Mode (Interactive TUI & Fast CLI)**:
-  - Interactive terminal menu with arrows & prompts for everyday developers.
+  - Interactive terminal menu with arrows & masked password inputs.
   - Command-line flags (`--staged`, `--branch`, `--json`) for quick scripts and pipelines.
 - **🧩 Smart Heading Chunker**: Keeps markdown rule contexts intact by chunking along headings (`#`, `##`, `###`).
-- **⚡ Flexible LLM Support**: Powered by Vercel AI SDK (`gpt-4o`, `gpt-4o-mini`, or any compatible model).
 
 ---
 
@@ -30,11 +35,11 @@ curl -fsSL https://raw.githubusercontent.com/jagoankode/rag-pr-reviewer/main/ins
 npm install -g git+https://github.com/jagoankode/rag-pr-reviewer.git
 ```
 
-### 2. Configure API Key
-Export your OpenAI API key in your shell profile (`~/.bashrc`, `~/.zshrc`) or project `.env`:
-```bash
-export OPENAI_API_KEY="your-api-key-here"
-```
+### 2. Configure AI Provider
+Simply run `pr-rag` and select **"🤖 Configure AI Provider"** from the interactive menu.
+Your settings (API Key, Base URL, Default Model) are securely saved to `~/.pr-rag/config.json`.
+
+*(Alternatively, you can export `OPENAI_API_KEY` and `OPENAI_BASE_URL` in your terminal shell).*
 
 ### 3. Uninstall
 ```bash
@@ -56,7 +61,8 @@ pr-rag ui
 You will be greeted with an interactive terminal menu:
 - 🔍 **Review Git Changes**: Select between uncommitted changes, staged changes, or compare branch.
 - 📚 **Ingest Guidelines**: Provide a path to markdown documents to update your local vector index.
-- ⚙️ **Check Status & Config**: Verify Git status, LanceDB path, and API keys.
+- 🤖 **Configure AI Provider**: Switch providers (9router, OpenAI, OpenRouter, Ollama) and update API keys.
+- ⚙️ **Check Status & Config**: Verify Git status, LanceDB path, active provider, and API key status.
 
 ---
 
@@ -81,7 +87,7 @@ pr-rag review --staged
 pr-rag review --branch main
 
 # Specify a custom model or limit retrieved chunks
-pr-rag review --branch main --model gpt-4o --limit 7
+pr-rag review --branch main --model ag/gemini-3.8-flash --limit 7
 
 # Output machine-readable JSON
 pr-rag review --json
@@ -128,6 +134,7 @@ rag-pr-reviewer/
 │   │   └── tui.ts          # Interactive Terminal UI (Inquirer + Boxen)
 │   ├── core/
 │   │   ├── chunker.ts      # Markdown section chunking engine
+│   │   ├── config.ts       # AI Provider config manager (~/.pr-rag/config.json)
 │   │   ├── db.ts           # Embedded LanceDB vector storage (~/.pr-rag/db)
 │   │   ├── diff-parser.ts  # Git diff line-by-line annotator
 │   │   ├── git.ts          # Git CLI execution helpers
