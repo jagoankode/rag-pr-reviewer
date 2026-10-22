@@ -7,31 +7,36 @@ export interface DiffLine {
   type: 'add' | 'del' | 'normal';
 }
 
-export interface AnnotatedDiffFile {
+export interface AnnotatedFileDiff {
   file: string;
-  lines: string; // File diff with line numbers prepended: "L20: const a: any = 123;"
+  annotatedText: string;
+  addedLinesCount: number;
 }
 
 /**
- * Parses raw git diff and annotates each added/modified line with its exact line number
- * so the LLM can precisely reference the line of violation.
+ * Parses raw git diff and annotates each file individually with exact line numbers.
+ * Returning per-file blocks enables granular real-time progress indicators (e.g. [1/50] src/payment.ts).
  */
-export function annotateDiffWithLineNumbers(rawDiff: string): { annotatedText: string; files: string[] } {
+export function parseAnnotatedDiffFiles(rawDiff: string): AnnotatedFileDiff[] {
   const parsedFiles = parseDiff(rawDiff);
-  const annotatedBlocks: string[] = [];
-  const fileNames: string[] = [];
+  const result: AnnotatedFileDiff[] = [];
 
   for (const file of parsedFiles) {
     const filePath = file.to || file.from || 'unknown';
-    fileNames.push(filePath);
+    // Skip deleted files or binary files without change chunks
+    if (file.deleted || file.chunks.length === 0) {
+      continue;
+    }
 
     const fileLines: string[] = [`### File: ${filePath}`];
+    let addedCount = 0;
 
     for (const chunk of file.chunks) {
       fileLines.push(`@@ -${chunk.oldStart},${chunk.oldLines} +${chunk.newStart},${chunk.newLines} @@`);
-      
+
       for (const change of chunk.changes) {
         if (change.type === 'add') {
+          addedCount++;
           fileLines.push(`+ L${change.ln}: ${change.content.replace(/^\+/, '')}`);
         } else if (change.type === 'del') {
           fileLines.push(`- (old): ${change.content.replace(/^-/, '')}`);
@@ -41,11 +46,23 @@ export function annotateDiffWithLineNumbers(rawDiff: string): { annotatedText: s
       }
     }
 
-    annotatedBlocks.push(fileLines.join('\n'));
+    result.push({
+      file: filePath,
+      annotatedText: fileLines.join('\n'),
+      addedLinesCount: addedCount,
+    });
   }
 
+  return result;
+}
+
+/**
+ * Legacy combined annotator
+ */
+export function annotateDiffWithLineNumbers(rawDiff: string): { annotatedText: string; files: string[] } {
+  const fileDiffs = parseAnnotatedDiffFiles(rawDiff);
   return {
-    annotatedText: annotatedBlocks.join('\n\n'),
-    files: fileNames,
+    annotatedText: fileDiffs.map((f) => f.annotatedText).join('\n\n'),
+    files: fileDiffs.map((f) => f.file),
   };
 }

@@ -10,7 +10,6 @@ const ai_1 = require("ai");
 const git_js_1 = require("../core/git.js");
 const diff_parser_js_1 = require("../core/diff-parser.js");
 const db_js_1 = require("../core/db.js");
-const prompt_js_1 = require("../core/prompt.js");
 const config_js_1 = require("../core/config.js");
 const history_js_1 = require("../core/history.js");
 const schema_js_1 = require("../core/schema.js");
@@ -47,39 +46,86 @@ async function reviewCommand(options) {
                         : 'Tidak ada perubahan yang terdeteksi (git diff kosong).'));
             return;
         }
-        spinner.text = chalk_1.default.cyan('Mem-parse diff dan mapping nomor baris...');
-        const { annotatedText, files } = (0, diff_parser_js_1.annotateDiffWithLineNumbers)(rawDiff);
-        spinner.text = chalk_1.default.cyan(`Mencari aturan coding terkait dari LanceDB (${files.length} file diubah)...`);
-        let relevantRules = [];
-        try {
-            const chunks = await (0, db_js_1.searchRelevantGuidelines)(rawDiff, options.limit || 7);
-            relevantRules = chunks.map((c) => `[Source: ${c.title}]\n${c.content}`);
-            if (relevantRules.length > 0) {
-                spinner.info(chalk_1.default.gray(`Ditemukan ${relevantRules.length} guideline yang relevan.`));
-            }
-            else {
-                spinner.info(chalk_1.default.gray('Belum ada guideline yang di-ingest, mereview dengan standar umum.'));
-            }
-        }
-        catch {
-            spinner.info(chalk_1.default.gray('Vector store belum diinisialisasi atau kosong. Melanjutkan review umum.'));
+        spinner.text = chalk_1.default.cyan('Mem-parse diff per file...');
+        const fileDiffs = (0, diff_parser_js_1.parseAnnotatedDiffFiles)(rawDiff);
+        if (fileDiffs.length === 0) {
+            spinner.info(chalk_1.default.yellow('Tidak ada perubahan baris kode (mungkin hanya file biner/dihapus).'));
+            return;
         }
         const { client, config } = await (0, config_js_1.getActiveAIProvider)();
         const modelName = options.model || config.defaultModel || 'ag/gemini-3.8-flash';
-        spinner.start(chalk_1.default.magenta(`Menganalisis pelanggaran baris per baris via AI (${modelName})...`));
-        const prompt = (0, prompt_js_1.buildLineReviewPrompt)(annotatedText, relevantRules);
-        const { object: reviewResult } = await (0, ai_1.generateObject)({
-            model: client(modelName),
-            schema: schema_js_1.PRReviewResultSchema,
-            prompt: prompt,
-        });
-        spinner.succeed(chalk_1.default.green(`Review selesai! Ditemukan ${reviewResult.violations.length} pelanggaran.\n`));
+        const totalFiles = fileDiffs.length;
+        spinner.succeed(chalk_1.default.green(`Ditemukan ${totalFiles} file yang berubah. Memulai analisis per file...\n`));
+        const allViolations = [];
+        const generalFeedback = [];
+        // Iterasi per file dengan progress indicator real-time [1 dari N file]
+        for (let i = 0; i < totalFiles; i++) {
+            const fileDiff = fileDiffs[i];
+            const progressLabel = `[${i + 1}/${totalFiles}]`;
+            const fileSpinner = (0, ora_1.default)(chalk_1.default.magenta(`${progressLabel} Menganalisis ${chalk_1.default.bold.underline(fileDiff.file)} (${fileDiff.addedLinesCount} baris)...`)).start();
+            try {
+                // Cari RAG guideline yang spesifik untuk file/diff ini
+                let relevantRules = [];
+                try {
+                    const chunks = await (0, db_js_1.searchRelevantGuidelines)(`${fileDiff.file}\n${fileDiff.annotatedText}`, options.limit || 5);
+                    relevantRules = chunks.map((c) => `[Source: ${c.title}]\n${c.content}`);
+                }
+                catch {
+                    // fallback jika db kosong
+                }
+                const prompt = `You are a strict Senior Tech Lead and Code Reviewer.
+Audit the following file changes against the provided code conventions.
+
+${relevantRules.length > 0
+                    ? `### Relevant Coding Standards & Architecture Rules:\n${relevantRules.join('\n\n---\n\n')}`
+                    : 'Standard industry conventions: enforce strict typing (no any), error handling, and clean architecture.'}
+
+### Guidelines for Review:
+1. Review newly added or modified lines marked with \`+ L<number>:\`.
+2. Map every convention violation directly to its exact \`file\` and \`line\` number.
+3. If no violation is found, return an empty violations array.
+4. SuggestedFix must be a string snippet or null if not applicable.
+
+### File Diff to Review:
+${fileDiff.annotatedText}
+`;
+                const { object } = await (0, ai_1.generateObject)({
+                    model: client(modelName),
+                    schema: schema_js_1.FileReviewResultSchema,
+                    prompt,
+                });
+                if (object.violations && object.violations.length > 0) {
+                    allViolations.push(...object.violations);
+                    fileSpinner.warn(chalk_1.default.yellow(`${progressLabel} ${fileDiff.file} ➔ Ditemukan ${object.violations.length} pelanggaran`));
+                }
+                else {
+                    fileSpinner.succeed(chalk_1.default.gray(`${progressLabel} ${fileDiff.file} ➔ Bersih (Clean)`));
+                }
+                if (object.notes && object.notes.length > 0) {
+                    generalFeedback.push(...object.notes);
+                }
+            }
+            catch (err) {
+                fileSpinner.fail(chalk_1.default.red(`${progressLabel} ${fileDiff.file} ➔ Gagal dianalisis: ${err.message}`));
+            }
+        }
+        // Tentukan status akhir PR
+        const hasErrors = allViolations.some((v) => v.severity === 'error');
+        const finalStatus = hasErrors ? 'REQUEST_CHANGES' : allViolations.length > 0 ? 'COMMENT' : 'APPROVE';
+        const finalSummary = `Telah selesai mereview ${totalFiles} file yang diubah. Ditemukan total ${allViolations.length} pelanggaran code convention.`;
+        const reviewResult = {
+            status: finalStatus,
+            summary: finalSummary,
+            violations: allViolations,
+            generalFeedback: Array.from(new Set(generalFeedback)),
+        };
         if (options.json) {
             console.log(JSON.stringify(reviewResult, null, 2));
             return reviewResult;
         }
+        console.log('');
         printReviewTerminalReport(reviewResult);
-        // Simpan report history markdown secara default (kecuali opsi json)
+        // Simpan report history markdown secara default
         if (options.saveReport !== false) {
             try {
                 const reportLabel = targetBranch && sourceBranch
@@ -88,6 +134,8 @@ async function reviewCommand(options) {
                 const savedPath = await (0, history_js_1.saveReviewReport)(reviewResult, {
                     branch: reportLabel,
                     staged: options.staged,
+                    sourceBranch,
+                    targetBranch,
                     model: modelName,
                     outputDir: options.outputDir,
                 });
@@ -102,7 +150,6 @@ async function reviewCommand(options) {
     catch (error) {
         spinner.fail(chalk_1.default.red(`Review gagal: ${error.message}`));
         console.log(chalk_1.default.yellow('\n💡 Tips: Pastikan konfigurasi AI Provider, API key, atau nama branch sudah benar di menu TUI.\n'));
-        // Return void gracefully agar TUI tidak tertutup/exit
         return;
     }
 }
@@ -116,7 +163,7 @@ function printReviewTerminalReport(result) {
     console.log(`Status  : ${statusColor(result.status)}`);
     console.log(`Summary : ${result.summary}\n`);
     if (result.violations.length === 0) {
-        console.log(chalk_1.default.green('✔ Tidak ditemukan pelanggaran code convention pada baris yang diubah!'));
+        console.log(chalk_1.default.green('✔ Tidak ditemukan pelanggaran code convention pada semua file yang diubah!'));
     }
     else {
         console.log(chalk_1.default.bold.red(`🚨 Line-by-Line Violations & PR Comments (${result.violations.length}):\n`));
