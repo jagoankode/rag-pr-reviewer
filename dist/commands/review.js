@@ -22,14 +22,29 @@ async function reviewCommand(options) {
     }
     const spinner = (0, ora_1.default)(chalk_1.default.blue('Mengambil git diff...')).start();
     try {
+        const targetBranch = options.target || options.branch;
+        const sourceBranch = options.source;
+        if (targetBranch && sourceBranch) {
+            spinner.text = chalk_1.default.blue(`Mengambil git diff: ${targetBranch}...${sourceBranch} (PR style)...`);
+        }
+        else if (targetBranch) {
+            spinner.text = chalk_1.default.blue(`Mengambil git diff terhadap branch: ${targetBranch}...`);
+        }
         const rawDiff = await (0, git_js_1.getGitDiff)({
             staged: options.staged,
-            branch: options.branch,
+            branch: targetBranch,
+            targetBranch: targetBranch,
+            sourceBranch: sourceBranch,
+            fetchRemote: options.fetchRemote,
         });
         if (!rawDiff || rawDiff.trim().length === 0) {
             spinner.info(chalk_1.default.yellow(options.staged
                 ? 'Tidak ada perubahan staged (git diff --staged kosong).'
-                : 'Tidak ada perubahan yang terdeteksi (git diff kosong).'));
+                : targetBranch && sourceBranch
+                    ? `Tidak ada perbedaan antara branch ${targetBranch} dan ${sourceBranch}.`
+                    : targetBranch
+                        ? `Tidak ada perbedaan terhadap branch ${targetBranch}.`
+                        : 'Tidak ada perubahan yang terdeteksi (git diff kosong).'));
             return;
         }
         spinner.text = chalk_1.default.cyan('Mem-parse diff dan mapping nomor baris...');
@@ -50,7 +65,7 @@ async function reviewCommand(options) {
             spinner.info(chalk_1.default.gray('Vector store belum diinisialisasi atau kosong. Melanjutkan review umum.'));
         }
         const { client, config } = await (0, config_js_1.getActiveAIProvider)();
-        const modelName = options.model || config.defaultModel || 'gpt-4o';
+        const modelName = options.model || config.defaultModel || 'ag/gemini-3.8-flash';
         spinner.start(chalk_1.default.magenta(`Menganalisis pelanggaran baris per baris via AI (${modelName})...`));
         const prompt = (0, prompt_js_1.buildLineReviewPrompt)(annotatedText, relevantRules);
         const { object: reviewResult } = await (0, ai_1.generateObject)({
@@ -67,8 +82,11 @@ async function reviewCommand(options) {
         // Simpan report history markdown secara default (kecuali opsi json)
         if (options.saveReport !== false) {
             try {
+                const reportLabel = targetBranch && sourceBranch
+                    ? `${targetBranch.replace(/\//g, '_')}_vs_${sourceBranch.replace(/\//g, '_')}`
+                    : targetBranch || (options.staged ? 'staged' : 'local');
                 const savedPath = await (0, history_js_1.saveReviewReport)(reviewResult, {
-                    branch: options.branch,
+                    branch: reportLabel,
                     staged: options.staged,
                     model: modelName,
                     outputDir: options.outputDir,

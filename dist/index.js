@@ -15,9 +15,8 @@ const program = new commander_1.Command();
 program
     .name('pr-rag')
     .description(chalk_1.default.cyan('AI-powered local Pull Request reviewer using embedded RAG (LanceDB) & Line-by-Line Convention Audit'))
-    .version('1.2.0')
+    .version('1.3.0')
     .action(async () => {
-    // Jalankan mode interaktif TUI jika dipanggil tanpa sub-perintah (cth: `pr-rag` langsung)
     await (0, tui_js_1.runInteractiveTUI)();
 });
 program
@@ -35,10 +34,13 @@ program
 });
 program
     .command('review')
-    .description('Review local git changes with RAG-enhanced AI and pinpoint exact line violations')
+    .description('Review git changes with RAG-enhanced AI and pinpoint exact line violations')
     .option('-s, --staged', 'Review only staged changes')
-    .option('-b, --branch <branch>', 'Review diff against a specific git branch (e.g. main)')
-    .option('-m, --model <model>', 'LLM model to use (default: gpt-4o)', 'gpt-4o')
+    .option('-b, --branch <branch>', 'Review diff against a specific git branch (legacy alias for --target)')
+    .option('--source <branch>', 'Source / feature branch to review (e.g. feature-x or origin/feature-x)')
+    .option('--target <branch>', 'Target / base branch to compare against (e.g. main or origin/main)')
+    .option('--fetch', 'Fetch remote branches before comparing (git fetch --all)')
+    .option('-m, --model <model>', 'LLM model to use (default: config model or ag/gemini-3.8-flash)')
     .option('-l, --limit <number>', 'Number of relevant guidelines to retrieve', (val) => parseInt(val, 10), 7)
     .option('--no-save', 'Disable saving review report to markdown in .rag-reviews/')
     .option('--output-dir <path>', 'Custom directory to save markdown reports (default: .rag-reviews)')
@@ -46,6 +48,7 @@ program
     .action(async (options) => {
     await (0, review_js_1.reviewCommand)({
         ...options,
+        fetchRemote: options.fetch,
         saveReport: options.save !== false,
     });
 });

@@ -1,6 +1,6 @@
 {
   "name": "rag-pr-reviewer",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "AI-powered local Pull Request reviewer using embedded RAG & line-by-line convention audit",
   "main": "dist/index.js",
   "bin": {

@@ -3,7 +3,7 @@ import boxen from 'boxen';
 import { select, input, confirm, password } from '@inquirer/prompts';
 import { ingestCommand } from './ingest.js';
 import { reviewCommand } from './review.js';
-import { isGitRepo } from '../core/git.js';
+import { isGitRepo, getAvailableBranches, getCurrentBranch } from '../core/git.js';
 import { loadConfig, saveConfig, AppConfig } from '../core/config.js';
 import { listSavedReports } from '../core/history.js';
 import { marked } from 'marked';
@@ -39,7 +39,7 @@ export async function runInteractiveTUI() {
       message: 'Pilih aksi yang ingin dijalankan:',
       choices: [
         {
-          name: '🔍 Review Git Changes (Local RAG Review)',
+          name: '🔍 Review Git Changes / PR Branch (Source vs Target)',
           value: 'review',
           disabled: !inRepo ? '(Bukan git repo)' : false,
         },
@@ -86,24 +86,63 @@ export async function runInteractiveTUI() {
       await ingestCommand(docPath);
       console.log('');
     } else if (choice === 'review') {
+      const currentBranch = await getCurrentBranch();
+
       const diffType = await select({
-        message: 'Pilih jenis perubahan yang mau di-review:',
+        message: 'Pilih mode review git yang diinginkan:',
         choices: [
-          { name: '📝 Uncommitted changes (Semua perubahan lokal)', value: 'uncommitted' },
-          { name: '📦 Staged changes only (yang sudah di git add)', value: 'staged' },
-          { name: '🌿 Compare branch (misal: vs main)', value: 'branch' },
+          {
+            name: `🔀 PR Branch Review (Source Branch ⟵ Target / Origin)`,
+            value: 'pr_branches',
+          },
+          {
+            name: '📝 Uncommitted changes (Semua perubahan lokal yang belum di-commit)',
+            value: 'uncommitted',
+          },
+          {
+            name: '📦 Staged changes only (Perubahan yang sudah di git add)',
+            value: 'staged',
+          },
         ],
       });
 
-      let branchName: string | undefined = undefined;
-      if (diffType === 'branch') {
-        branchName = await input({
-          message: 'Target branch pembanding:',
-          default: 'main',
+      let targetBranch: string | undefined = undefined;
+      let sourceBranch: string | undefined = undefined;
+      let doFetch = false;
+
+      if (diffType === 'pr_branches') {
+        // Tanya apakah ingin git fetch remote terlebih dahulu
+        doFetch = await confirm({
+          message: 'Fetch branch remote terbaru dari origin terlebih dahulu (git fetch --all)?',
+          default: true,
+        });
+
+        const { local, remote } = await getAvailableBranches();
+        const allBranches = Array.from(new Set([...local, ...remote]));
+
+        // Target / Base Branch (e.g. main, origin/main, master, develop)
+        const defaultTarget = allBranches.includes('origin/main')
+          ? 'origin/main'
+          : allBranches.includes('main')
+          ? 'main'
+          : 'origin/master';
+
+        targetBranch = await input({
+          message: 'Target/Base Branch (tujuan PR, misal: origin/main, main, develop):',
+          default: defaultTarget,
+          validate: (val) => (val.trim().length > 0 ? true : 'Target branch tidak boleh kosong'),
+        });
+
+        // Source / Head Branch (e.g. current branch, origin/feature-xxx)
+        const defaultSource = currentBranch !== 'HEAD' ? currentBranch : (allBranches[0] || 'HEAD');
+        sourceBranch = await input({
+          message: 'Source/Feature Branch (cabang yang mau direview, misal: feature-a, origin/feature-a):',
+          default: defaultSource,
+          validate: (val) => (val.trim().length > 0 ? true : 'Source branch tidak boleh kosong'),
         });
       }
 
-      const defaultModel = config.defaultModel || 'gpt-4o';
+      const defaultModel = config.defaultModel || 'ag/gemini-3.8-flash';
       const model = await select<string>({
         message: 'Pilih model LLM untuk review:',
         choices: [
@@ -124,14 +163,17 @@ export async function runInteractiveTUI() {
       console.log('');
       await reviewCommand({
         staged: diffType === 'staged',
-        branch: branchName,
+        target: targetBranch,
+        source: sourceBranch,
+        fetchRemote: doFetch,
         model: selectedModel,
         saveReport: true,
       });
       console.log('');
     } else if (choice === 'status') {
+      const currentBranch = inRepo ? await getCurrentBranch() : '-';
       console.log(chalk.cyan('\n─── Status RAG Reviewer ───'));
-      console.log(`Git Repo Active : ${inRepo ? chalk.green('Yes') : chalk.red('No')}`);
+      console.log(`Git Repo Active : ${inRepo ? chalk.green(`Yes (Current Branch: ${currentBranch})`) : chalk.red('No')}`);
       console.log(`Vector DB Path  : ${chalk.yellow('~/.pr-rag/db')}`);
       console.log(`History Reports : ${chalk.yellow('./.rag-reviews/*.md')}`);
       console.log(`AI Provider     : ${chalk.bold.magenta(config.provider)}`);
@@ -197,8 +239,8 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
   });
 
   let baseUrl = '';
-  let defaultModel = 'gpt-4o';
-  let embeddingModel = 'text-embedding-3-small';
+  let defaultModel = 'ag/gemini-3.8-flash';
+  let embeddingModel = 'local';
 
   if (provider === '9router') {
     baseUrl = await input({
@@ -209,10 +251,7 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
       message: 'Default Model (contoh: ag/gemini-3.8-flash, ag/gpt-4o):',
       default: currentConfig.defaultModel || 'ag/gemini-3.8-flash',
     });
-    embeddingModel = await input({
-      message: 'Embedding Model (untuk LanceDB RAG):',
-      default: currentConfig.embeddingModel || 'text-embedding-3-small',
-    });
+    embeddingModel = 'local'; // 9router otomatis pakai local TF-IDF vectorizer
   } else if (provider === 'openai') {
     baseUrl = '';
     defaultModel = await input({
@@ -226,10 +265,7 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
       message: 'Default Model (contoh: anthropic/claude-3.5-sonnet, openai/gpt-4o):',
       default: currentConfig.defaultModel || 'openai/gpt-4o',
     });
-    embeddingModel = await input({
-      message: 'Embedding Model:',
-      default: currentConfig.embeddingModel || 'text-embedding-3-small',
-    });
+    embeddingModel = 'local';
   } else if (provider === 'ollama') {
     baseUrl = await input({
       message: 'Ollama Base URL:',
@@ -239,10 +275,7 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
       message: 'Ollama Model:',
       default: currentConfig.defaultModel || 'qwen2.5-coder',
     });
-    embeddingModel = await input({
-      message: 'Ollama Embedding Model:',
-      default: currentConfig.embeddingModel || 'nomic-embed-text',
-    });
+    embeddingModel = 'local';
   } else if (provider === 'custom') {
     baseUrl = await input({
       message: 'Custom Base URL:',
@@ -252,10 +285,7 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
       message: 'Default Model:',
       default: currentConfig.defaultModel || 'gpt-4o',
     });
-    embeddingModel = await input({
-      message: 'Embedding Model:',
-      default: currentConfig.embeddingModel || 'text-embedding-3-small',
-    });
+    embeddingModel = 'local';
   }
 
   let apiKey = '';

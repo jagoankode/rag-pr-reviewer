@@ -13,11 +13,16 @@ const path_1 = __importDefault(require("path"));
  */
 function formatReportToMarkdown(result, options = {}) {
     const dateStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-    const targetLabel = options.branch
-        ? `Branch: \`${options.branch}\``
-        : options.staged
-            ? 'Staged changes (`--staged`)'
-            : 'Uncommitted working directory changes';
+    let targetLabel = 'Uncommitted working directory changes';
+    if (options.sourceBranch && options.targetBranch) {
+        targetLabel = `PR Diff: \`${options.targetBranch}\` ⟵ \`${options.sourceBranch}\``;
+    }
+    else if (options.branch) {
+        targetLabel = `Branch Diff: \`${options.branch}\``;
+    }
+    else if (options.staged) {
+        targetLabel = 'Staged changes (`--staged`)';
+    }
     const statusBadge = result.status === 'APPROVE'
         ? '🟢 **APPROVE (LGTM)**'
         : result.status === 'REQUEST_CHANGES'
@@ -77,10 +82,19 @@ ${v.suggestedFix}
 async function saveReviewReport(result, options = {}) {
     const dir = options.outputDir || path_1.default.join(process.cwd(), '.rag-reviews');
     await fs_1.promises.mkdir(dir, { recursive: true });
-    const safeBranch = (options.branch || (options.staged ? 'staged' : 'local'))
-        .replace(/[^a-zA-Z0-9_-]/g, '_');
+    let safeName = 'local';
+    if (options.sourceBranch && options.targetBranch) {
+        safeName = `${options.targetBranch}_vs_${options.sourceBranch}`;
+    }
+    else if (options.branch) {
+        safeName = options.branch;
+    }
+    else if (options.staged) {
+        safeName = 'staged';
+    }
+    safeName = safeName.replace(/[^a-zA-Z0-9_-]/g, '_');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `review-${safeBranch}-${timestamp}.md`;
+    const filename = `review-${safeName}-${timestamp}.md`;
     const fullPath = path_1.default.join(dir, filename);
     const markdownContent = formatReportToMarkdown(result, options);
     await fs_1.promises.writeFile(fullPath, markdownContent, 'utf-8');
