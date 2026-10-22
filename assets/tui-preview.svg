@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 850 480" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d1117" />
+      <stop offset="100%" stop-color="#161b22" />
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <rect width="850" height="480" rx="16" fill="url(#bg)" stroke="#30363d" stroke-width="2" filter="url(#shadow)"/>
+
+  <!-- Window Header -->
+  <g transform="translate(24, 20)">
+    <circle cx="12" cy="12" r="6" fill="#ff5f56" />
+    <circle cx="32" cy="12" r="6" fill="#ffbd2e" />
+    <circle cx="52" cy="12" r="6" fill="#27c93f" />
+    <text x="390" y="16" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#8b949e" text-anchor="middle">pr-rag interactive terminal</text>
+  </g>
+  <line x1="0" y1="52" x2="850" y2="52" stroke="#30363d" stroke-width="1"/>
+
+  <!-- Terminal Content -->
+  <g transform="translate(40, 75)" font-family="'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace" font-size="13">
+    <!-- Boxen Banner -->
+    <rect x="140" y="10" width="480" height="70" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+    <text x="380" y="38" font-size="16" font-weight="bold" fill="#58a6ff" text-anchor="middle">🧪 RAG PR Reviewer</text>
+    <text x="380" y="60" font-size="12" fill="#8b949e" text-anchor="middle">Embedded Local AI Code Review &amp; Convention Auditor</text>
+
+    <!-- Prompt Question -->
+    <text x="20" y="125" font-size="14" font-weight="bold" fill="#e6edf3">? Pilih aksi yang ingin dijalankan:</text>
+
+    <!-- Menu Items -->
+    <!-- Selected Item -->
+    <g transform="translate(20, 145)">
+      <rect x="0" y="0" width="720" height="32" rx="6" fill="#1f6feb" fill-opacity="0.15" stroke="#388bfd" stroke-width="1"/>
+      <text x="16" y="21" font-weight="bold" fill="#58a6ff">❯ 🔍 Review Git Changes (Local RAG Review)</text>
+    </g>
+
+    <text x="36" y="200" fill="#c9d1d9">  📚 Ingest Guidelines / Conventions ke Vector DB</text>
+    <text x="36" y="230" fill="#c9d1d9">  🤖 Configure AI Provider <tspan fill="#a371f7">(9router: ag/gemini-3.8-flash)</tspan></text>
+    <text x="36" y="260" fill="#c9d1d9">  ⚙️  Check Status &amp; Config</text>
+    <text x="36" y="290" fill="#8b949e">  🚪 Keluar</text>
+
+    <!-- Status Box Bottom Preview -->
+    <g transform="translate(20, 320)">
+      <rect x="0" y="0" width="720" height="50" rx="6" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+      <circle cx="20" cy="25" r="5" fill="#3fb950" />
+      <text x="36" y="29" font-size="12" fill="#8b949e">Active Workspace: <tspan fill="#e6edf3">git repo (main)</tspan> | Vector Store: <tspan fill="#e6edf3">~/.pr-rag/db</tspan> | Provider: <tspan fill="#a371f7">9router</tspan></text>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 850 560" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d1117" />
+      <stop offset="100%" stop-color="#161b22" />
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <rect width="850" height="560" rx="16" fill="url(#bg)" stroke="#30363d" stroke-width="2" filter="url(#shadow)"/>
+
+  <!-- Window Header -->
+  <g transform="translate(24, 20)">
+    <circle cx="12" cy="12" r="6" fill="#ff5f56" />
+    <circle cx="32" cy="12" r="6" fill="#ffbd2e" />
+    <circle cx="52" cy="12" r="6" fill="#27c93f" />
+    <text x="390" y="16" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#8b949e" text-anchor="middle">pr-rag review terminal output</text>
+  </g>
+  <line x1="0" y1="52" x2="850" y2="52" stroke="#30363d" stroke-width="1"/>
+
+  <!-- Terminal Content -->
+  <g transform="translate(35, 75)" font-family="'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace" font-size="12.5">
+    <text x="0" y="20" fill="#58a6ff" font-weight="bold">═════════════════════ PULL REQUEST REVIEW REPORT ═════════════════════</text>
+    
+    <text x="0" y="50" fill="#e6edf3">Status  : <tspan fill="#f85149" font-weight="bold">REQUEST_CHANGES</tspan></text>
+    <text x="0" y="75" fill="#8b949e">Summary : <tspan fill="#e6edf3">Added payment processing webhook and updated transaction schema.</tspan></text>
+
+    <text x="0" y="115" fill="#f85149" font-weight="bold">🚨 Line-by-Line Violations &amp; PR Comments (2):</text>
+
+    <!-- Violation 1 -->
+    <g transform="translate(0, 135)">
+      <rect x="0" y="0" width="60" height="20" rx="4" fill="#da3633"/>
+      <text x="30" y="14" fill="#ffffff" font-size="11" font-weight="bold" text-anchor="middle">ERROR</text>
+      <text x="70" y="14" fill="#58a6ff" font-weight="bold" text-decoration="underline">src/payment.ts</text>
+      <text x="195" y="14" fill="#d29922" font-weight="bold">: line 20</text>
+
+      <text x="20" y="38" fill="#8b949e">Rule   : <tspan fill="#c9d1d9">strict-typing-no-any</tspan></text>
+      <text x="20" y="60" fill="#8b949e">Comment: <tspan fill="#ffffff">You shouldn't use any data type, because shape ambiguous violates code convention rules.</tspan></text>
+      <text x="20" y="82" fill="#8b949e">Fix    : <tspan fill="#3fb950">const paymentPayload: PaymentRequest = req.body;</tspan></text>
+      <line x1="0" y1="100" x2="780" y2="100" stroke="#21262d" stroke-width="1"/>
+    </g>
+
+    <!-- Violation 2 -->
+    <g transform="translate(0, 255)">
+      <rect x="0" y="0" width="60" height="20" rx="4" fill="#d29922"/>
+      <text x="30" y="14" fill="#000000" font-size="11" font-weight="bold" text-anchor="middle">WARN</text>
+      <text x="70" y="14" fill="#58a6ff" font-weight="bold" text-decoration="underline">src/payment.ts</text>
+      <text x="195" y="14" fill="#d29922" font-weight="bold">: line 45</text>
+
+      <text x="20" y="38" fill="#8b949e">Rule   : <tspan fill="#c9d1d9">error-handling-idempotency</tspan></text>
+      <text x="20" y="60" fill="#8b949e">Comment: <tspan fill="#ffffff">Missing idempotency key check before initiating external payment transaction.</tspan></text>
+      <text x="20" y="82" fill="#8b949e">Fix    : <tspan fill="#3fb950">if (!payload.idempotencyKey) throw new BadRequestError('Idempotency required');</tspan></text>
+      <line x1="0" y1="100" x2="780" y2="100" stroke="#21262d" stroke-width="1"/>
+    </g>
+
+    <!-- General Feedback -->
+    <text x="0" y="385" fill="#58a6ff" font-weight="bold">📌 General Architecture Notes:</text>
+    <text x="20" y="410" fill="#c9d1d9">• Ensure new payment endpoints are documented in OpenAPI specification.</text>
+    <text x="20" y="430" fill="#c9d1d9">• Add integration test coverage for failed payment webhook callbacks.</text>
+
+    <text x="0" y="465" fill="#58a6ff" font-weight="bold">══════════════════════════════════════════════════════════════════════</text>
+  </g>
+</svg>

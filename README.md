@@ -6,6 +6,20 @@ Detects code convention violations and produces actionable, line-by-line PR comm
 
 ---
 
+## 📸 Screenshots
+
+### 1. Interactive Terminal UI (TUI Mode)
+Navigate seamlessly using arrow keys to review git changes, ingest new markdown guidelines, or switch AI providers on the fly.
+
+![Interactive TUI Preview](assets/tui-preview.svg)
+
+### 2. Line-Level Convention Audit & PR Comments
+Clear, color-coded terminal reports mapping exact violations (`file.ts : line 20`) with rule violations and suggested fixes.
+
+![Review Report Preview](assets/review-report-preview.svg)
+
+---
+
 ## ✨ Key Features
 
 - **🚀 100% Local Execution**: Runs entirely on your machine. Zero external servers or Docker required.
@@ -95,38 +109,13 @@ pr-rag review --json
 
 ---
 
-## 📋 Example Review Output
-
-```text
-═════════════════════ PULL REQUEST REVIEW REPORT ═════════════════════
-Status  : REQUEST_CHANGES
-Summary : Refactored payment processing logic and added webhook handler.
-
-🚨 Line-by-Line Violations & PR Comments (2):
-
- ERROR  src/payment.ts : line 20
-    Rule   : strict-typing-no-any
-    Comment: You shouldn't use any data type, because shape ambiguous violates code convention rules.
-    Fix    : const paymentPayload: PaymentRequest = req.body;
-──────────────────────────────────────────────────────────────────────
- WARN   src/payment.ts : line 45
-    Rule   : error-handling-idempotency
-    Comment: Missing idempotency key check before initiating external payment transaction.
-    Fix    : if (!payload.idempotencyKey) throw new BadRequestError('Idempotency key required');
-──────────────────────────────────────────────────────────────────────
-
-📌 General Architecture Notes:
- • Ensure new payment endpoints are documented in OpenAPI specification.
-
-══════════════════════════════════════════════════════════════════════
-```
-
----
-
 ## 🛠️ Architecture
 
 ```text
 rag-pr-reviewer/
+├── assets/
+│   ├── tui-preview.svg            # TUI interface visual mock
+│   └── review-report-preview.svg  # Terminal line audit visual mock
 ├── src/
 │   ├── commands/
 │   │   ├── ingest.ts       # Parses markdown -> chunks -> embeds -> stores in LanceDB
