@@ -6,6 +6,7 @@ import { annotateDiffWithLineNumbers } from '../core/diff-parser.js';
 import { searchRelevantGuidelines } from '../core/db.js';
 import { buildLineReviewPrompt } from '../core/prompt.js';
 import { getActiveAIProvider } from '../core/config.js';
+import { saveReviewReport } from '../core/history.js';
 import { PRReviewResultSchema, PRReviewResult } from '../core/schema.js';
 
 export interface ReviewOptions {
@@ -14,6 +15,8 @@ export interface ReviewOptions {
   model?: string;
   limit?: number;
   json?: boolean;
+  saveReport?: boolean;
+  outputDir?: string;
 }
 
 export async function reviewCommand(options: ReviewOptions): Promise<PRReviewResult | void> {
@@ -79,6 +82,21 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     }
 
     printReviewTerminalReport(reviewResult);
+
+    // Simpan report history markdown secara default (kecuali opsi json)
+    if (options.saveReport !== false) {
+      try {
+        const savedPath = await saveReviewReport(reviewResult, {
+          branch: options.branch,
+          staged: options.staged,
+          model: modelName,
+          outputDir: options.outputDir,
+        });
+        console.log(chalk.gray(`💾 History report tersimpan di: ${chalk.underline.cyan(savedPath)}\n`));
+      } catch (err: any) {
+        console.warn(chalk.yellow(`Peringatan: Gagal menyimpan report markdown: ${err.message}`));
+      }
+    }
 
     return reviewResult;
   } catch (error: any) {

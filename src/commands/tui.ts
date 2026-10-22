@@ -5,6 +5,9 @@ import { ingestCommand } from './ingest.js';
 import { reviewCommand } from './review.js';
 import { isGitRepo } from '../core/git.js';
 import { loadConfig, saveConfig, AppConfig } from '../core/config.js';
+import { listSavedReports } from '../core/history.js';
+import { marked } from 'marked';
+import { promises as fs } from 'fs';
 
 export async function runInteractiveTUI() {
   console.clear();
@@ -45,6 +48,10 @@ export async function runInteractiveTUI() {
           value: 'ingest',
         },
         {
+          name: '📜 View Review History (.rag-reviews)',
+          value: 'history',
+        },
+        {
           name: `🤖 Configure AI Provider (${chalk.cyan(config.provider)})`,
           value: 'config_ai',
         },
@@ -66,6 +73,8 @@ export async function runInteractiveTUI() {
 
     if (choice === 'config_ai') {
       await configureAIProviderUI(config);
+    } else if (choice === 'history') {
+      await viewHistoryUI();
     } else if (choice === 'ingest') {
       const docPath = await input({
         message: 'Masukkan path file/folder panduan markdown:',
@@ -117,12 +126,14 @@ export async function runInteractiveTUI() {
         staged: diffType === 'staged',
         branch: branchName,
         model: selectedModel,
+        saveReport: true,
       });
       console.log('');
     } else if (choice === 'status') {
       console.log(chalk.cyan('\n─── Status RAG Reviewer ───'));
       console.log(`Git Repo Active : ${inRepo ? chalk.green('Yes') : chalk.red('No')}`);
       console.log(`Vector DB Path  : ${chalk.yellow('~/.pr-rag/db')}`);
+      console.log(`History Reports : ${chalk.yellow('./.rag-reviews/*.md')}`);
       console.log(`AI Provider     : ${chalk.bold.magenta(config.provider)}`);
       console.log(`Base URL        : ${config.baseUrl || chalk.gray('(Default OpenAI)')}`);
       console.log(`Default Model   : ${chalk.cyan(config.defaultModel)}`);
@@ -142,6 +153,33 @@ export async function runInteractiveTUI() {
     console.clear();
     console.log(banner);
   }
+}
+
+async function viewHistoryUI() {
+  const reports = await listSavedReports();
+  if (reports.length === 0) {
+    console.log(chalk.yellow('\nBelum ada history review yang tersimpan di .rag-reviews/\n'));
+    return;
+  }
+
+  const choices = reports.map((r) => ({
+    name: `${chalk.cyan(r.filename)} ${chalk.gray(`(${r.date.toLocaleString()})`)}`,
+    value: r.fullPath,
+  }));
+
+  choices.push({ name: '🔙 Kembali ke menu utama', value: 'back' });
+
+  const chosenPath = await select({
+    message: 'Pilih laporan review yang ingin dilihat:',
+    choices,
+  });
+
+  if (chosenPath === 'back') return;
+
+  const content = await fs.readFile(chosenPath, 'utf-8');
+  console.log(chalk.bold.cyan('\n═════════════════════ SAVED REVIEW REPORT ═════════════════════\n'));
+  console.log(marked(content));
+  console.log(chalk.bold.cyan('═══════════════════════════════════════════════════════════════\n'));
 }
 
 async function configureAIProviderUI(currentConfig: AppConfig) {

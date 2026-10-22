@@ -41,9 +41,21 @@ program
   .option('-b, --branch <branch>', 'Review diff against a specific git branch (e.g. main)')
   .option('-m, --model <model>', 'LLM model to use (default: gpt-4o)', 'gpt-4o')
   .option('-l, --limit <number>', 'Number of relevant guidelines to retrieve', (val) => parseInt(val, 10), 7)
+  .option('--no-save', 'Disable saving review report to markdown in .rag-reviews/')
+  .option('--output-dir <path>', 'Custom directory to save markdown reports (default: .rag-reviews)')
   .option('--json', 'Output review result as raw JSON')
   .action(async (options) => {
-    await reviewCommand(options);
+    await reviewCommand({
+      ...options,
+      saveReport: options.save !== false,
+    });
+  });
+
+program
+  .command('history')
+  .description('View saved review reports history')
+  .action(async () => {
+    await runInteractiveTUI();
   });
 
 program.parse(process.argv);
