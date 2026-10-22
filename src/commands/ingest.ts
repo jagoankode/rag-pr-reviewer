@@ -14,7 +14,7 @@ export function resolveUserPath(inputPath: string): string {
   return path.resolve(process.cwd(), cleaned);
 }
 
-export async function ingestCommand(targetPath: string) {
+export async function ingestCommand(targetPath: string): Promise<boolean> {
   const resolvedPath = resolveUserPath(targetPath);
   const spinner = ora(chalk.blue(`Scanning files at: ${resolvedPath}...`)).start();
 
@@ -22,7 +22,7 @@ export async function ingestCommand(targetPath: string) {
     const files = await scanDocFiles(resolvedPath);
     if (files.length === 0) {
       spinner.warn(chalk.yellow(`Tidak ditemukan file markdown/dokumen di: ${resolvedPath}`));
-      return;
+      return false;
     }
 
     spinner.text = chalk.blue(`Membaca dan memotong dokumen dari ${files.length} file...`);
@@ -36,15 +36,16 @@ export async function ingestCommand(targetPath: string) {
 
     if (allChunks.length === 0) {
       spinner.warn(chalk.yellow('File kosong atau teks tidak cukup panjang untuk di-chunk.'));
-      return;
+      return false;
     }
 
     spinner.text = chalk.cyan(`Membuat embeddings & menyimpan ${allChunks.length} chunks ke LanceDB...`);
     const count = await insertChunks(allChunks);
 
     spinner.succeed(chalk.green(`Berhasil meng-ingest ${count} chunks ke vector database lokal!`));
+    return true;
   } catch (error: any) {
     spinner.fail(chalk.red(`Gagal meng-ingest dokumen: ${error.message}`));
-    process.exit(1);
+    return false;
   }
 }

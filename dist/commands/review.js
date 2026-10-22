@@ -18,7 +18,7 @@ async function reviewCommand(options) {
     const isRepo = await (0, git_js_1.isGitRepo)();
     if (!isRepo) {
         console.error(chalk_1.default.red('Error: Perintah harus dijalankan di dalam git repository!'));
-        process.exit(1);
+        return;
     }
     const spinner = (0, ora_1.default)(chalk_1.default.blue('Mengambil git diff...')).start();
     try {
@@ -101,7 +101,9 @@ async function reviewCommand(options) {
     }
     catch (error) {
         spinner.fail(chalk_1.default.red(`Review gagal: ${error.message}`));
-        process.exit(1);
+        console.log(chalk_1.default.yellow('\n💡 Tips: Pastikan konfigurasi AI Provider, API key, atau nama branch sudah benar di menu TUI.\n'));
+        // Return void gracefully agar TUI tidak tertutup/exit
+        return;
     }
 }
 function printReviewTerminalReport(result) {

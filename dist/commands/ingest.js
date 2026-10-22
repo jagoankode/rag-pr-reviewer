@@ -26,7 +26,7 @@ async function ingestCommand(targetPath) {
         const files = await (0, chunker_js_1.scanDocFiles)(resolvedPath);
         if (files.length === 0) {
             spinner.warn(chalk_1.default.yellow(`Tidak ditemukan file markdown/dokumen di: ${resolvedPath}`));
-            return;
+            return false;
         }
         spinner.text = chalk_1.default.blue(`Membaca dan memotong dokumen dari ${files.length} file...`);
         let allChunks = [];
@@ -37,14 +37,15 @@ async function ingestCommand(targetPath) {
         }
         if (allChunks.length === 0) {
             spinner.warn(chalk_1.default.yellow('File kosong atau teks tidak cukup panjang untuk di-chunk.'));
-            return;
+            return false;
         }
         spinner.text = chalk_1.default.cyan(`Membuat embeddings & menyimpan ${allChunks.length} chunks ke LanceDB...`);
         const count = await (0, db_js_1.insertChunks)(allChunks);
         spinner.succeed(chalk_1.default.green(`Berhasil meng-ingest ${count} chunks ke vector database lokal!`));
+        return true;
     }
     catch (error) {
         spinner.fail(chalk_1.default.red(`Gagal meng-ingest dokumen: ${error.message}`));
-        process.exit(1);
+        return false;
     }
 }
