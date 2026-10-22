@@ -1,84 +1,147 @@
-# rag-pr-reviewer
+# rag-pr-reviewer (`pr-rag`)
 
-CLI tool for AI-powered Pull Request review with **embedded local RAG** using [LanceDB](https://lancedb.com/) & [Vercel AI SDK](https://sdk.vercel.ai/).
+AI-powered local Pull Request reviewer with **embedded RAG** ([LanceDB](https://lancedb.com/)) & **Interactive Terminal UI (TUI)**.
 
-## ✨ Features
-
-- **Embedded Vector Database**: Runs LanceDB locally with zero external server or Docker dependencies.
-- **Smart Markdown Chunker**: Chunks guidelines based on headings (`#`, `##`, `###`) so rule contexts remain intact.
-- **Git Native Integration**: Reads staged diffs, branch comparisons, or uncommitted changes directly via native git CLI.
-- **RAG-Enhanced Code Review**: Queries your team's indexed architecture/coding guidelines and injects relevant rules into the LLM prompt.
-- **Flexible Models**: Powered by Vercel AI SDK (default: `gpt-4o`, interchangeable via `--model`).
-- **Terminal Markdown Output**: Pretty prints rich markdown reviews right in your terminal.
+Detects code convention violations and produces actionable, line-by-line PR comments directly in your terminal before code is pushed.
 
 ---
 
-## 🚀 Installation & Setup
+## ✨ Key Features
 
-1. **Clone & install dependencies:**
-   ```bash
-   git clone git@github.com:jagoankode/rag-pr-reviewer.git
-   cd rag-pr-reviewer
-   npm install
-   ```
-
-2. **Configure API Keys:**
-   Create a `.env` file in the root folder:
-   ```env
-   OPENAI_API_KEY=your_openai_api_key_here
-   ```
-
-3. **Build TypeScript:**
-   ```bash
-   npm run build
-   ```
+- **🚀 100% Local Execution**: Runs entirely on your machine. Zero external servers or Docker required.
+- **📚 Embedded RAG Engine**: Indexes internal team standards, guidelines, and architecture rules locally via LanceDB (`~/.pr-rag/db`).
+- **📍 Precise Line-Level Audit**: Identifies exact files and line numbers (`file.ts : line 20`) violating conventions.
+- **🖥️ Dual Mode (Interactive TUI & Fast CLI)**:
+  - Interactive terminal menu with arrows & prompts for everyday developers.
+  - Command-line flags (`--staged`, `--branch`, `--json`) for quick scripts and pipelines.
+- **🧩 Smart Heading Chunker**: Keeps markdown rule contexts intact by chunking along headings (`#`, `##`, `###`).
+- **⚡ Flexible LLM Support**: Powered by Vercel AI SDK (`gpt-4o`, `gpt-4o-mini`, or any compatible model).
 
 ---
 
-## 🛠️ Usage
+## ⚡ Quick Install & Uninstall (No Git Clone Required)
 
-### 1. Ingest Guidelines / Architecture Rules into Vector DB
-Index your team's coding conventions, security guidelines, or documentation:
+### 1. One-Liner Install
 ```bash
-# Ingest single file or entire docs directory
-npx tsx src/index.ts ingest ./docs
-# or
-npx tsx src/index.ts ingest path/to/coding-standards.md
+curl -fsSL https://raw.githubusercontent.com/jagoankode/rag-pr-reviewer/main/install.sh | bash
+```
+*Or install globally via npm:*
+```bash
+npm install -g git+https://github.com/jagoankode/rag-pr-reviewer.git
 ```
 
-### 2. Run Review on Git Changes
+### 2. Configure API Key
+Export your OpenAI API key in your shell profile (`~/.bashrc`, `~/.zshrc`) or project `.env`:
+```bash
+export OPENAI_API_KEY="your-api-key-here"
+```
+
+### 3. Uninstall
+```bash
+curl -fsSL https://raw.githubusercontent.com/jagoankode/rag-pr-reviewer/main/uninstall.sh | bash
+# or: npm uninstall -g rag-pr-reviewer
+```
+
+---
+
+## 🎮 How to Use
+
+### 1. Interactive TUI Mode (Recommended)
+Simply type `pr-rag` anywhere inside a git repository:
+```bash
+pr-rag
+# or
+pr-rag ui
+```
+You will be greeted with an interactive terminal menu:
+- 🔍 **Review Git Changes**: Select between uncommitted changes, staged changes, or compare branch.
+- 📚 **Ingest Guidelines**: Provide a path to markdown documents to update your local vector index.
+- ⚙️ **Check Status & Config**: Verify Git status, LanceDB path, and API keys.
+
+---
+
+### 2. Direct CLI Commands
+
+#### Ingest Guidelines into Vector DB
+```bash
+# Ingest single markdown document or entire docs folder
+pr-rag ingest ./docs/coding-conventions.md
+pr-rag ingest ./docs
+```
+
+#### Run Reviews
 ```bash
 # Review uncommitted changes
-npx tsx src/index.ts review
+pr-rag review
 
-# Review staged changes only
-npx tsx src/index.ts review --staged
+# Review only staged changes (git add)
+pr-rag review --staged
 
-# Review changes against a specific branch
-npx tsx src/index.ts review --branch main
+# Review changes against another branch
+pr-rag review --branch main
 
-# Specify a different model or limit relevant context chunks
-npx tsx src/index.ts review --model gpt-4o --limit 5
+# Specify a custom model or limit retrieved chunks
+pr-rag review --branch main --model gpt-4o --limit 7
+
+# Output machine-readable JSON
+pr-rag review --json
 ```
 
 ---
 
-## 📁 Project Architecture
+## 📋 Example Review Output
+
+```text
+═════════════════════ PULL REQUEST REVIEW REPORT ═════════════════════
+Status  : REQUEST_CHANGES
+Summary : Refactored payment processing logic and added webhook handler.
+
+🚨 Line-by-Line Violations & PR Comments (2):
+
+ ERROR  src/payment.ts : line 20
+    Rule   : strict-typing-no-any
+    Comment: You shouldn't use any data type, because shape ambiguous violates code convention rules.
+    Fix    : const paymentPayload: PaymentRequest = req.body;
+──────────────────────────────────────────────────────────────────────
+ WARN   src/payment.ts : line 45
+    Rule   : error-handling-idempotency
+    Comment: Missing idempotency key check before initiating external payment transaction.
+    Fix    : if (!payload.idempotencyKey) throw new BadRequestError('Idempotency key required');
+──────────────────────────────────────────────────────────────────────
+
+📌 General Architecture Notes:
+ • Ensure new payment endpoints are documented in OpenAPI specification.
+
+══════════════════════════════════════════════════════════════════════
+```
+
+---
+
+## 🛠️ Architecture
 
 ```text
 rag-pr-reviewer/
 ├── src/
 │   ├── commands/
-│   │   ├── ingest.ts       # Parses docs -> chunks by heading -> embeds -> stores in LanceDB
-│   │   └── review.ts       # Fetches git diff -> vector searches rules -> LLM review -> CLI output
+│   │   ├── ingest.ts       # Parses markdown -> chunks -> embeds -> stores in LanceDB
+│   │   ├── review.ts       # Parses diff -> searches rules -> structured LLM audit -> terminal report
+│   │   └── tui.ts          # Interactive Terminal UI (Inquirer + Boxen)
 │   ├── core/
 │   │   ├── chunker.ts      # Markdown section chunking engine
-│   │   ├── db.ts           # LanceDB connection & vector search helpers
-│   │   ├── git.ts          # Git diff runner
-│   │   └── prompt.ts       # Senior code review prompt builder
-│   ├── types/
-│   │   └── marked-terminal.d.ts
-│   └── index.ts            # Commander CLI entrypoint
+│   │   ├── db.ts           # Embedded LanceDB vector storage (~/.pr-rag/db)
+│   │   ├── diff-parser.ts  # Git diff line-by-line annotator
+│   │   ├── git.ts          # Git CLI execution helpers
+│   │   ├── prompt.ts       # Strict convention audit prompt builder
+│   │   └── schema.ts       # Zod structured output schema (File, Line, Rule, Severity)
+│   └── index.ts            # CLI & TUI entrypoint
+├── install.sh              # One-liner global installation script
+├── uninstall.sh            # Global uninstallation & vector cleanup script
 ├── tsconfig.json
 └── package.json
 ```
+
+---
+
+## 📄 License
+
+ISC © [jagoankode](https://github.com/jagoankode)
