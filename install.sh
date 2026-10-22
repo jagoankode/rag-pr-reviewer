@@ -47,7 +47,8 @@ fi
 echo -e "${YELLOW}2. Menginstall runtime dependencies lokal...${NC}"
 (
     cd "$INSTALL_DIR"
-    npm install --omit=dev --loglevel=error --no-audit --no-fund
+    # Pastikan pakai official npmjs registry, bukan internal mirror
+    npm install --omit=dev --loglevel=error --no-audit --no-fund --registry=https://registry.npmjs.org
 )
 
 echo -e "${YELLOW}3. Membuat executable launcher di /usr/local/bin/pr-rag...${NC}"
