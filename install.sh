@@ -9,7 +9,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${CYAN}═════════════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}    🧪 Installing pr-rag (Local RAG PR Reviewer)            ${NC}"
+echo -e "${CYAN}    🧪 Installing / Updating pr-rag (Local RAG PR Reviewer)   ${NC}"
 echo -e "${CYAN}═════════════════════════════════════════════════════════════${NC}\n"
 
 # 1. Check Node.js
@@ -31,20 +31,33 @@ if ! command -v npm >/dev/null 2>&1; then
     exit 1
 fi
 
-INSTALL_DIR="$HOME/.pr-rag/app"
+PR_RAG_DIR="$HOME/.pr-rag"
+INSTALL_DIR="$PR_RAG_DIR/app"
 BIN_DIR="$HOME/.local/bin"
 BIN_TARGET="$BIN_DIR/pr-rag"
 
-echo -e "${YELLOW}1. Menyiapkan direktori di ${INSTALL_DIR}...${NC}"
-rm -rf "$INSTALL_DIR"
-mkdir -p "$INSTALL_DIR"
+# PENTING: Folder data RAG (~/.pr-rag/db) dan config (~/.pr-rag/config.json)
+# berada di luar $INSTALL_DIR sehingga 100% aman dan tidak terhapus saat upgrade.
+echo -e "${YELLOW}1. Mengunduh & memperbarui aplikasi di ${INSTALL_DIR}...${NC}"
+mkdir -p "$PR_RAG_DIR"
 mkdir -p "$BIN_DIR"
 
+TMP_DOWNLOAD=$(mktemp -d)
 if command -v git >/dev/null 2>&1; then
-    git clone --depth=1 https://github.com/jagoankode/rag-pr-reviewer.git "$INSTALL_DIR" --quiet
+    git clone --depth=1 https://github.com/jagoankode/rag-pr-reviewer.git "$TMP_DOWNLOAD" --quiet
 else
-    curl -fsSL https://github.com/jagoankode/rag-pr-reviewer/archive/refs/heads/main.tar.gz | tar -xz -C "$INSTALL_DIR" --strip-components=1
+    curl -fsSL https://github.com/jagoankode/rag-pr-reviewer/archive/refs/heads/main.tar.gz | tar -xz -C "$TMP_DOWNLOAD" --strip-components=1
 fi
+
+# Pindahkan hanya dist, package.json, package-lock.json (BUANG src, .git, tsconfig agar source aman)
+rm -rf "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR"
+cp -r "$TMP_DOWNLOAD/dist" "$INSTALL_DIR/"
+cp "$TMP_DOWNLOAD/package.json" "$INSTALL_DIR/"
+if [ -f "$TMP_DOWNLOAD/package-lock.json" ]; then
+    cp "$TMP_DOWNLOAD/package-lock.json" "$INSTALL_DIR/"
+fi
+rm -rf "$TMP_DOWNLOAD"
 
 echo -e "${YELLOW}2. Menginstall runtime dependencies lokal...${NC}"
 (
@@ -52,9 +65,7 @@ echo -e "${YELLOW}2. Menginstall runtime dependencies lokal...${NC}"
     npm install --omit=dev --loglevel=error --no-audit --no-fund --registry=https://registry.npmjs.org
 )
 
-echo -e "${YELLOW}3. Memasang binary pr-rag ke ${BIN_TARGET}...${NC}"
-
-# Hapus symlink lama atau broken symlink dari npm sebelumnya jika ada
+echo -e "${YELLOW}3. Menyiapkan executable binary di ${BIN_TARGET}...${NC}"
 rm -f "$BIN_TARGET"
 
 cat << 'EOF' > "$BIN_TARGET"
@@ -83,6 +94,9 @@ detect_and_add_path() {
 detect_and_add_path "$HOME/.zshrc"
 detect_and_add_path "$HOME/.bashrc"
 
-echo -e "\n${GREEN}✔ Instalasi selesai tanpa sudo!${NC}"
+echo -e "\n${GREEN}✔ Instalasi / Upgrade berhasil!${NC}"
+if [ -d "$PR_RAG_DIR/db" ]; then
+    echo -e "${GREEN}🔒 Data RAG Vector DB & Konfigurasi tetap aman dan terjaga.${NC}"
+fi
 echo -e "Binary terpasang di: ${CYAN}$BIN_TARGET${NC}"
-echo -e "Jalankan: ${YELLOW}source ~/.zshrc${NC} (atau buka tab baru), lalu ketik: ${GREEN}pr-rag${NC}\n"
+echo -e "Ketik ${GREEN}pr-rag${NC} di terminal untuk langsung membuka TUI.\n"
