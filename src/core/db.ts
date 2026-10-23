@@ -28,6 +28,25 @@ export async function getDb(): Promise<lancedb.Connection> {
 }
 
 /**
+ * Mengambil semua daftar guidelines/aturan yang tersimpan di LanceDB
+ */
+export async function listAllIndexedGuidelines(): Promise<{ id: string; source: string; title: string; content: string }[]> {
+  const db = await getDb();
+  const tableNames = await db.tableNames();
+  if (!tableNames.includes(TABLE_NAME)) {
+    return [];
+  }
+  const table = await db.openTable(TABLE_NAME);
+  const rows = await table.query().toArray();
+  return rows.map((r: any) => ({
+    id: r.id,
+    source: r.source,
+    title: r.title,
+    content: r.content,
+  }));
+}
+
+/**
  * Generate embeddings: coba via API provider dulu,
  * jika provider tidak punya endpoint embedding (seperti 9router/chat-only gateway),
  * fallback otomatis ke high-speed local embedding vectorizer (Zero-Failure).

@@ -37,6 +37,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getDb = getDb;
+exports.listAllIndexedGuidelines = listAllIndexedGuidelines;
 exports.insertChunks = insertChunks;
 exports.searchRelevantGuidelines = searchRelevantGuidelines;
 const lancedb = __importStar(require("@lancedb/lancedb"));
@@ -53,6 +54,24 @@ async function getDb() {
         dbInstance = await lancedb.connect(DB_DIR);
     }
     return dbInstance;
+}
+/**
+ * Mengambil semua daftar guidelines/aturan yang tersimpan di LanceDB
+ */
+async function listAllIndexedGuidelines() {
+    const db = await getDb();
+    const tableNames = await db.tableNames();
+    if (!tableNames.includes(TABLE_NAME)) {
+        return [];
+    }
+    const table = await db.openTable(TABLE_NAME);
+    const rows = await table.query().toArray();
+    return rows.map((r) => ({
+        id: r.id,
+        source: r.source,
+        title: r.title,
+        content: r.content,
+    }));
 }
 /**
  * Generate embeddings: coba via API provider dulu,

@@ -3,6 +3,7 @@ import boxen from 'boxen';
 import { select, input, confirm, password } from '@inquirer/prompts';
 import { ingestCommand } from './ingest.js';
 import { reviewCommand } from './review.js';
+import { inspectGuidelinesCommand } from './guidelines.js';
 import { isGitRepo, getAvailableBranches, getCurrentBranch } from '../core/git.js';
 import { loadConfig, saveConfig, AppConfig } from '../core/config.js';
 import { listSavedReports, resolveReportDir, deleteReportFile, clearAllReports } from '../core/history.js';
@@ -44,6 +45,10 @@ export async function runInteractiveTUI() {
           disabled: !inRepo ? '(Bukan git repo)' : false,
         },
         {
+          name: '📖 Inspect Active Rules (Lihat Aturan yang Tersimpan di RAG)',
+          value: 'inspect_rules',
+        },
+        {
           name: '📚 Ingest Guidelines / Conventions ke Vector DB',
           value: 'ingest',
         },
@@ -71,7 +76,9 @@ export async function runInteractiveTUI() {
       process.exit(0);
     }
 
-    if (choice === 'config_ai') {
+    if (choice === 'inspect_rules') {
+      await inspectGuidelinesCommand();
+    } else if (choice === 'config_ai') {
       await configureAIProviderUI(config);
     } else if (choice === 'history') {
       await viewHistoryUI(config.defaultReportDir || '.rag-reviews');
@@ -245,7 +252,6 @@ async function viewHistoryUI(defaultDir: string = '.rag-reviews') {
     return;
   }
 
-  // Tampilkan submenu aksi untuk file yang dipilih
   const fileAction = await select({
     message: `Aksi untuk ${chalk.cyan(chosenAction)}:`,
     choices: [
