@@ -10,6 +10,7 @@ const prompts_1 = require("@inquirer/prompts");
 const ingest_js_1 = require("./ingest.js");
 const review_js_1 = require("./review.js");
 const guidelines_js_1 = require("./guidelines.js");
+const learn_js_1 = require("./learn.js");
 const git_js_1 = require("../core/git.js");
 const config_js_1 = require("../core/config.js");
 const history_js_1 = require("../core/history.js");
@@ -37,6 +38,10 @@ async function runInteractiveTUI() {
                     name: '🔍 Review Git Changes / PR Branch (Source vs Target)',
                     value: 'review',
                     disabled: !inRepo ? '(Bukan git repo)' : false,
+                },
+                {
+                    name: '🧠 Learn from Local Feature Code (Belajar dari Folder/Route Lokal)',
+                    value: 'learn_code',
                 },
                 {
                     name: '📖 Inspect Active Rules (Lihat Aturan yang Tersimpan di RAG)',
@@ -68,7 +73,17 @@ async function runInteractiveTUI() {
             console.log(chalk_1.default.gray('\nSampai jumpa, Bos! 👋\n'));
             process.exit(0);
         }
-        if (choice === 'inspect_rules') {
+        if (choice === 'learn_code') {
+            const folderPath = await (0, prompts_1.input)({
+                message: 'Masukkan path folder fitur/route lokal yang ingin dipelajari (misal: ./src/features/payment atau src/routes/users):',
+                default: './src',
+                validate: (val) => (val.trim().length > 0 ? true : 'Path tidak boleh kosong'),
+            });
+            console.log('');
+            await (0, learn_js_1.learnFeatureCommand)(folderPath, config.defaultModel);
+            console.log('');
+        }
+        else if (choice === 'inspect_rules') {
             await (0, guidelines_js_1.inspectGuidelinesCommand)();
         }
         else if (choice === 'config_ai') {

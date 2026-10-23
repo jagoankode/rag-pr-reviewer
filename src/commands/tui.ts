@@ -4,6 +4,7 @@ import { select, input, confirm, password } from '@inquirer/prompts';
 import { ingestCommand, ingestDirectRuleCommand } from './ingest.js';
 import { reviewCommand } from './review.js';
 import { inspectGuidelinesCommand } from './guidelines.js';
+import { learnFeatureCommand } from './learn.js';
 import { isGitRepo, getAvailableBranches, getCurrentBranch } from '../core/git.js';
 import { loadConfig, saveConfig, AppConfig } from '../core/config.js';
 import { listSavedReports, resolveReportDir, deleteReportFile, clearAllReports } from '../core/history.js';
@@ -44,6 +45,10 @@ export async function runInteractiveTUI() {
           disabled: !inRepo ? '(Bukan git repo)' : false,
         },
         {
+          name: '🧠 Learn from Local Feature Code (Belajar dari Folder/Route Lokal)',
+          value: 'learn_code',
+        },
+        {
           name: '📖 Inspect Active Rules (Lihat Aturan yang Tersimpan di RAG)',
           value: 'inspect_rules',
         },
@@ -75,7 +80,17 @@ export async function runInteractiveTUI() {
       process.exit(0);
     }
 
-    if (choice === 'inspect_rules') {
+    if (choice === 'learn_code') {
+      const folderPath = await input({
+        message: 'Masukkan path folder fitur/route lokal yang ingin dipelajari (misal: ./src/features/payment atau src/routes/users):',
+        default: './src',
+        validate: (val) => (val.trim().length > 0 ? true : 'Path tidak boleh kosong'),
+      });
+
+      console.log('');
+      await learnFeatureCommand(folderPath, config.defaultModel);
+      console.log('');
+    } else if (choice === 'inspect_rules') {
       await inspectGuidelinesCommand();
     } else if (choice === 'config_ai') {
       await configureAIProviderUI(config);

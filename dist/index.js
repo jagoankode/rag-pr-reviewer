@@ -9,13 +9,14 @@ const chalk_1 = __importDefault(require("chalk"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const ingest_js_1 = require("./commands/ingest.js");
 const review_js_1 = require("./commands/review.js");
+const learn_js_1 = require("./commands/learn.js");
 const tui_js_1 = require("./commands/tui.js");
 dotenv_1.default.config();
 const program = new commander_1.Command();
 program
     .name('pr-rag')
     .description(chalk_1.default.cyan('AI-powered local Pull Request reviewer using embedded RAG (LanceDB) & Line-by-Line Convention Audit'))
-    .version('1.3.0')
+    .version('1.6.0')
     .action(async () => {
     await (0, tui_js_1.runInteractiveTUI)();
 });
@@ -24,6 +25,13 @@ program
     .description('Launch the interactive Terminal User Interface (TUI)')
     .action(async () => {
     await (0, tui_js_1.runInteractiveTUI)();
+});
+program
+    .command('learn')
+    .description('Learn conventions from a local feature folder or route path (hulu-ke-hilir)')
+    .argument('<path>', 'Path to local folder/route containing code (e.g. ./src/features/payment or src/routes/users)')
+    .action(async (pathArg) => {
+    await (0, learn_js_1.learnFeatureCommand)(pathArg);
 });
 program
     .command('ingest')

@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import dotenv from 'dotenv';
 import { ingestCommand } from './commands/ingest.js';
 import { reviewCommand } from './commands/review.js';
+import { learnFeatureCommand } from './commands/learn.js';
 import { runInteractiveTUI } from './commands/tui.js';
 
 dotenv.config();
@@ -13,7 +14,7 @@ const program = new Command();
 program
   .name('pr-rag')
   .description(chalk.cyan('AI-powered local Pull Request reviewer using embedded RAG (LanceDB) & Line-by-Line Convention Audit'))
-  .version('1.3.0')
+  .version('1.6.0')
   .action(async () => {
     await runInteractiveTUI();
   });
@@ -23,6 +24,14 @@ program
   .description('Launch the interactive Terminal User Interface (TUI)')
   .action(async () => {
     await runInteractiveTUI();
+  });
+
+program
+  .command('learn')
+  .description('Learn conventions from a local feature folder or route path (hulu-ke-hilir)')
+  .argument('<path>', 'Path to local folder/route containing code (e.g. ./src/features/payment or src/routes/users)')
+  .action(async (pathArg) => {
+    await learnFeatureCommand(pathArg);
   });
 
 program
