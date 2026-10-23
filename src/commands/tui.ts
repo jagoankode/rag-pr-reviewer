@@ -10,33 +10,34 @@ import { loadConfig, saveConfig, AppConfig } from '../core/config.js';
 import { listSavedReports, resolveReportDir, deleteReportFile, clearAllReports } from '../core/history.js';
 import { promises as fs } from 'fs';
 
-export async function runInteractiveTUI() {
+function printHeader(breadcrumb: string) {
   console.clear();
-
   const banner = boxen(
     `${chalk.bold.cyan('🧪 RAG PR Reviewer')}\n${chalk.gray(
       'Embedded Local AI Code Review & Convention Auditor'
-    )}`,
+    )}\n\n${chalk.bold.yellow(`📍 ${breadcrumb}`)}`,
     {
       padding: 1,
-      margin: 1,
+      margin: { top: 0, bottom: 1, left: 1, right: 1 },
       borderStyle: 'round',
       borderColor: 'cyan',
       textAlignment: 'center',
     }
   );
-
   console.log(banner);
+}
 
-  const inRepo = await isGitRepo();
-  if (!inRepo) {
-    console.log(chalk.yellow('⚠️  Perhatian: Direktori saat ini bukan git repository. Opsi review hanya bisa dijalankan di git repo.\n'));
-  }
-
+export async function runInteractiveTUI() {
   while (true) {
+    printHeader('Menu Utama');
+    const inRepo = await isGitRepo();
     const config = await loadConfig();
 
-    const choice = await select({
+    if (!inRepo) {
+      console.log(chalk.yellow('⚠️  Perhatian: Direktori saat ini bukan git repository. Opsi review dimatikan.\n'));
+    }
+
+    const mainChoice = await select({
       message: 'Pilih aksi yang ingin dijalankan:',
       choices: [
         {
@@ -69,262 +70,305 @@ export async function runInteractiveTUI() {
           value: 'status',
         },
         {
-          name: '🚪 Keluar',
+          name: chalk.red('🚪 Keluar (Exit)'),
           value: 'exit',
         },
       ],
     });
 
-    if (choice === 'exit') {
+    if (mainChoice === 'exit') {
       console.log(chalk.gray('\nSampai jumpa, Bos! 👋\n'));
       process.exit(0);
     }
 
-    if (choice === 'learn_code') {
-      const folderPath = await input({
-        message: 'Masukkan path folder fitur/route lokal yang ingin dipelajari (misal: ./src/features/payment atau src/routes/users):',
-        default: './src',
-        validate: (val) => (val.trim().length > 0 ? true : 'Path tidak boleh kosong'),
-      });
-
-      console.log('');
-      await learnFeatureCommand(folderPath, config.defaultModel);
-      console.log('');
-    } else if (choice === 'inspect_rules') {
+    if (mainChoice === 'review') {
+      await reviewWorkflowUI(config);
+    } else if (mainChoice === 'learn_code') {
+      await learnWorkflowUI(config);
+    } else if (mainChoice === 'inspect_rules') {
       await inspectGuidelinesCommand();
-    } else if (choice === 'config_ai') {
-      await configureAIProviderUI(config);
-    } else if (choice === 'history') {
+    } else if (mainChoice === 'ingest') {
+      await ingestWorkflowUI();
+    } else if (mainChoice === 'history') {
       await viewHistoryUI(config.defaultReportDir || '.rag-reviews');
-    } else if (choice === 'ingest') {
-      const ingestType = await select({
-        message: 'Pilih sumber pengetahuan yang ingin di-ingest:',
-        choices: [
-          {
-            name: '📁 Dari File / Folder Dokumen (.md, .txt)',
-            value: 'file',
-          },
-          {
-            name: '💬 Input Percakapan / Aturan Baru Secara Langsung (Interactive Knowledge)',
-            value: 'interactive',
-          },
-        ],
-      });
-
-      if (ingestType === 'file') {
-        const docPath = await input({
-          message: 'Masukkan path file/folder dokumen:',
-          default: './docs',
-          validate: (val) => (val.trim().length > 0 ? true : 'Path tidak boleh kosong'),
-        });
-
-        console.log('');
-        await ingestCommand(docPath);
-        console.log('');
-      } else if (ingestType === 'interactive') {
-        const title = await input({
-          message: 'Judul aturan / pengetahuan baru (misal: "Aturan Penamaan DTO"):',
-          validate: (val) => (val.trim().length > 0 ? true : 'Judul tidak boleh kosong'),
-        });
-
-        const content = await input({
-          message: 'Isi aturan atau instruksi convention (bisa deskripsi bebas / contoh code):',
-          validate: (val) => (val.trim().length > 0 ? true : 'Isi aturan tidak boleh kosong'),
-        });
-
-        console.log('');
-        await ingestDirectRuleCommand(title, content);
-        console.log('');
-      }
-    } else if (choice === 'review') {
-      const currentBranch = await getCurrentBranch();
-
-      const diffType = await select({
-        message: 'Pilih mode review git yang diinginkan:',
-        choices: [
-          {
-            name: `🔀 PR Branch Review (Source Branch ⟵ Target / Origin)`,
-            value: 'pr_branches',
-          },
-          {
-            name: '📝 Uncommitted changes (Semua perubahan lokal yang belum di-commit)',
-            value: 'uncommitted',
-          },
-          {
-            name: '📦 Staged changes only (Perubahan yang sudah di git add)',
-            value: 'staged',
-          },
-        ],
-      });
-
-      let targetBranch: string | undefined = undefined;
-      let sourceBranch: string | undefined = undefined;
-      let doFetch = false;
-
-      if (diffType === 'pr_branches') {
-        doFetch = await confirm({
-          message: 'Fetch branch remote terbaru dari origin terlebih dahulu (git fetch --all)?',
-          default: true,
-        });
-
-        const { local, remote } = await getAvailableBranches();
-        const allBranches = Array.from(new Set([...local, ...remote]));
-
-        const defaultTarget = allBranches.includes('origin/main')
-          ? 'origin/main'
-          : allBranches.includes('main')
-          ? 'main'
-          : 'origin/master';
-
-        targetBranch = await input({
-          message: 'Target/Base Branch (tujuan PR, misal: origin/main, main, develop):',
-          default: defaultTarget,
-          validate: (val) => (val.trim().length > 0 ? true : 'Target branch tidak boleh kosong'),
-        });
-
-        const defaultSource = currentBranch !== 'HEAD' ? currentBranch : (allBranches[0] || 'HEAD');
-        sourceBranch = await input({
-          message: 'Source/Feature Branch (cabang yang mau direview, misal: feature-a, origin/feature-a):',
-          default: defaultSource,
-          validate: (val) => (val.trim().length > 0 ? true : 'Source branch tidak boleh kosong'),
-        });
-      }
-
-      const defaultDir = config.defaultReportDir || '.rag-reviews';
-      const outputDir = await input({
-        message: 'Folder penyimpanan laporan Markdown review:',
-        default: defaultDir,
-        validate: (val) => (val.trim().length > 0 ? true : 'Folder tidak boleh kosong'),
-      });
-
-      const defaultModel = config.defaultModel || 'ag/gemini-3.8-flash';
-      const model = await select<string>({
-        message: 'Pilih model LLM untuk review:',
-        choices: [
-          { name: `⚡ ${defaultModel} (Default Provider Model)`, value: defaultModel },
-          { name: '🧠 gpt-4o-mini', value: 'gpt-4o-mini' },
-          { name: '🧪 Custom Model (ketik manual)', value: 'custom' },
-        ],
-      });
-
-      let selectedModel: string = model;
-      if (model === 'custom') {
-        selectedModel = await input({
-          message: 'Nama model AI:',
-          default: defaultModel,
-        });
-      }
-
-      console.log('');
-      await reviewCommand({
-        staged: diffType === 'staged',
-        target: targetBranch,
-        source: sourceBranch,
-        fetchRemote: doFetch,
-        model: selectedModel,
-        outputDir: outputDir,
-        saveReport: true,
-      });
-      console.log('');
-    } else if (choice === 'status') {
-      const currentBranch = inRepo ? await getCurrentBranch() : '-';
-      const reportDir = resolveReportDir(config.defaultReportDir || '.rag-reviews');
-      console.log(chalk.cyan('\n─── Status RAG Reviewer ───'));
-      console.log(`Git Repo Active : ${inRepo ? chalk.green(`Yes (Current Branch: ${currentBranch})`) : chalk.red('No')}`);
-      console.log(`Vector DB Path  : ${chalk.yellow('~/.pr-rag/db')}`);
-      console.log(`Report Dir      : ${chalk.yellow(reportDir)}`);
-      console.log(`AI Provider     : ${chalk.bold.magenta(config.provider)}`);
-      console.log(`Base URL        : ${config.baseUrl || chalk.gray('(Default OpenAI)')}`);
-      console.log(`Default Model   : ${chalk.cyan(config.defaultModel)}`);
-      console.log(`API Key Status  : ${config.apiKey || process.env.OPENAI_API_KEY ? chalk.green('Configured ✅') : chalk.red('Missing ❌')}`);
-      console.log(chalk.cyan('───────────────────────────\n'));
+    } else if (mainChoice === 'config_ai') {
+      await configureAIProviderUI(config);
+    } else if (mainChoice === 'status') {
+      await showStatusUI(inRepo, config);
     }
-
-    const again = await confirm({
-      message: 'Ingin melakukan aksi lain?',
-      default: true,
-    });
-
-    if (!again) {
-      console.log(chalk.gray('\nSampai jumpa, Bos! 👋\n'));
-      break;
-    }
-    console.clear();
-    console.log(banner);
   }
 }
 
+async function reviewWorkflowUI(config: AppConfig) {
+  printHeader('Menu Utama > 🔍 Review Git');
+  const currentBranch = await getCurrentBranch();
+
+  const diffType = await select({
+    message: 'Pilih mode review git yang diinginkan:',
+    choices: [
+      {
+        name: `🔀 PR Branch Review (Source Branch ⟵ Target / Origin)`,
+        value: 'pr_branches',
+      },
+      {
+        name: '📝 Uncommitted changes (Semua perubahan lokal yang belum di-commit)',
+        value: 'uncommitted',
+      },
+      {
+        name: '📦 Staged changes only (Perubahan yang sudah di git add)',
+        value: 'staged',
+      },
+      {
+        name: '🔙 Batalkan & Kembali ke Menu Utama',
+        value: 'back',
+      },
+    ],
+  });
+
+  if (diffType === 'back') return;
+
+  let targetBranch: string | undefined = undefined;
+  let sourceBranch: string | undefined = undefined;
+  let doFetch = false;
+
+  if (diffType === 'pr_branches') {
+    const fetchChoice = await select({
+      message: 'Fetch branch remote terbaru dari origin (git fetch --all)?',
+      choices: [
+        { name: '✅ Ya, fetch remote terbaru sekarang', value: 'yes' },
+        { name: '⏩ Lewati fetch (gunakan cache branch lokal saat ini)', value: 'no' },
+        { name: '🔙 Batalkan review & kembali', value: 'back' },
+      ],
+    });
+
+    if (fetchChoice === 'back') return;
+    doFetch = fetchChoice === 'yes';
+
+    const { local, remote } = await getAvailableBranches();
+    const allBranches = Array.from(new Set([...local, ...remote]));
+
+    const defaultTarget = allBranches.includes('origin/main')
+      ? 'origin/main'
+      : allBranches.includes('main')
+      ? 'main'
+      : 'origin/master';
+
+    const rawTarget = await input({
+      message: 'Target/Base Branch (tujuan PR, atau ketik "b" untuk batal):',
+      default: defaultTarget,
+    });
+    if (rawTarget.trim().toLowerCase() === 'b' || rawTarget.trim().toLowerCase() === 'back') return;
+    targetBranch = rawTarget.trim();
+
+    const defaultSource = currentBranch !== 'HEAD' ? currentBranch : allBranches[0] || 'HEAD';
+    const rawSource = await input({
+      message: 'Source/Feature Branch (cabang yang mau direview, atau ketik "b" untuk batal):',
+      default: defaultSource,
+    });
+    if (rawSource.trim().toLowerCase() === 'b' || rawSource.trim().toLowerCase() === 'back') return;
+    sourceBranch = rawSource.trim();
+  }
+
+  // Pilih folder report
+  const defaultDir = config.defaultReportDir || '.rag-reviews';
+  const rawOutputDir = await input({
+    message: 'Folder penyimpanan laporan Markdown review (atau "b" untuk batal):',
+    default: defaultDir,
+  });
+  if (rawOutputDir.trim().toLowerCase() === 'b' || rawOutputDir.trim().toLowerCase() === 'back') return;
+  const outputDir = rawOutputDir.trim();
+
+  // Model LLM selection
+  const defaultModel = config.defaultModel || 'ag/gemini-3.8-flash';
+  const model = await select<string>({
+    message: 'Pilih model LLM untuk review:',
+    choices: [
+      { name: `⚡ ${defaultModel} (Default Provider Model)`, value: defaultModel },
+      { name: '🧠 gpt-4o-mini', value: 'gpt-4o-mini' },
+      { name: '🧪 Custom Model (ketik manual)', value: 'custom' },
+      { name: '🔙 Batalkan & Kembali', value: 'back' },
+    ],
+  });
+
+  if (model === 'back') return;
+
+  let selectedModel: string = model;
+  if (model === 'custom') {
+    const rawCustom = await input({
+      message: 'Nama model AI (atau "b" untuk batal):',
+      default: defaultModel,
+    });
+    if (rawCustom.trim().toLowerCase() === 'b' || rawCustom.trim().toLowerCase() === 'back') return;
+    selectedModel = rawCustom.trim();
+  }
+
+  console.log('');
+  await reviewCommand({
+    staged: diffType === 'staged',
+    target: targetBranch,
+    source: sourceBranch,
+    fetchRemote: doFetch,
+    model: selectedModel,
+    outputDir: outputDir,
+    saveReport: true,
+  });
+
+  await pressEnterToContinue();
+}
+
+async function learnWorkflowUI(config: AppConfig) {
+  printHeader('Menu Utama > 🧠 Learn Code');
+  console.log(chalk.gray('AI akan membedah source code lokal dari hulu ke hilir untuk mempelajari pola arsitektur.\n'));
+
+  const folderPath = await input({
+    message: 'Masukkan path folder/route lokal (atau ketik "b" untuk kembali):',
+    default: './src',
+  });
+
+  if (folderPath.trim().toLowerCase() === 'b' || folderPath.trim().toLowerCase() === 'back') return;
+
+  console.log('');
+  await learnFeatureCommand(folderPath.trim(), config.defaultModel);
+  await pressEnterToContinue();
+}
+
+async function ingestWorkflowUI() {
+  printHeader('Menu Utama > 📚 Ingest Knowledge');
+
+  const ingestType = await select({
+    message: 'Pilih metode memasukkan pengetahuan:',
+    choices: [
+      {
+        name: '📁 Dari File / Folder Dokumen (.md, .txt)',
+        value: 'file',
+      },
+      {
+        name: '💬 Input Percakapan / Aturan Baru Secara Langsung (Interactive)',
+        value: 'interactive',
+      },
+      {
+        name: '🔙 Batalkan & Kembali ke Menu Utama',
+        value: 'back',
+      },
+    ],
+  });
+
+  if (ingestType === 'back') return;
+
+  if (ingestType === 'file') {
+    const docPath = await input({
+      message: 'Masukkan path file/folder dokumen (atau ketik "b" untuk batal):',
+      default: './docs',
+    });
+
+    if (docPath.trim().toLowerCase() === 'b' || docPath.trim().toLowerCase() === 'back') return;
+
+    console.log('');
+    await ingestCommand(docPath.trim());
+  } else if (ingestType === 'interactive') {
+    const title = await input({
+      message: 'Judul aturan / pengetahuan (atau "b" untuk batal):',
+    });
+    if (!title.trim() || title.trim().toLowerCase() === 'b' || title.trim().toLowerCase() === 'back') return;
+
+    const content = await input({
+      message: 'Isi aturan atau instruksi convention (atau "b" untuk batal):',
+    });
+    if (!content.trim() || content.trim().toLowerCase() === 'b' || content.trim().toLowerCase() === 'back') return;
+
+    console.log('');
+    await ingestDirectRuleCommand(title.trim(), content.trim());
+  }
+
+  await pressEnterToContinue();
+}
+
 async function viewHistoryUI(defaultDir: string = '.rag-reviews') {
+  printHeader('Menu Utama > 📜 Review History');
+
   const customDir = await input({
-    message: 'Folder laporan markdown yang ingin dikelola:',
+    message: 'Folder laporan markdown yang ingin dikelola (atau "b" untuk kembali):',
     default: defaultDir,
   });
 
-  const resolved = resolveReportDir(customDir);
+  if (customDir.trim().toLowerCase() === 'b' || customDir.trim().toLowerCase() === 'back') return;
+
+  const resolved = resolveReportDir(customDir.trim());
   const reports = await listSavedReports(resolved);
 
   if (reports.length === 0) {
     console.log(chalk.yellow(`\nBelum ada history review yang tersimpan di ${resolved}\n`));
+    await pressEnterToContinue();
     return;
   }
 
-  const choices: Array<{ name: string; value: string }> = reports.map((r) => ({
-    name: `📄 ${chalk.cyan(r.filename)} ${chalk.gray(`(${r.date.toLocaleString()})`)}`,
-    value: r.fullPath,
-  }));
-
-  choices.push({ name: chalk.red('🗑️  Hapus SEMUA report di folder ini'), value: 'clear_all' });
-  choices.push({ name: '🔙 Kembali ke menu utama', value: 'back' });
-
-  const chosenAction = await select({
-    message: `Pilih laporan review di ${chalk.yellow(resolved)}:`,
-    choices,
-  });
-
-  if (chosenAction === 'back') return;
-
-  if (chosenAction === 'clear_all') {
-    const sure = await confirm({
-      message: `Yakin ingin menghapus seluruh (${reports.length}) file report di ${resolved}?`,
-      default: false,
-    });
-    if (sure) {
-      const deletedCount = await clearAllReports(resolved);
-      console.log(chalk.green(`\n✔ Berhasil menghapus ${deletedCount} file report markdown.\n`));
+  while (true) {
+    const refreshedReports = await listSavedReports(resolved);
+    if (refreshedReports.length === 0) {
+      console.log(chalk.yellow(`\nSemua laporan di ${resolved} sudah kosong.\n`));
+      await pressEnterToContinue();
+      return;
     }
-    return;
-  }
 
-  const fileAction = await select({
-    message: `Aksi untuk ${chalk.cyan(chosenAction)}:`,
-    choices: [
-      { name: '📖 Baca isi laporan (View Report)', value: 'view' },
-      { name: chalk.red('🗑️  Hapus file ini (Delete Report)'), value: 'delete' },
-      { name: '🔙 Batal', value: 'cancel' },
-    ],
-  });
+    const choices: Array<{ name: string; value: string }> = refreshedReports.map((r) => ({
+      name: `📄 ${chalk.cyan(r.filename)} ${chalk.gray(`(${r.date.toLocaleString()})`)}`,
+      value: r.fullPath,
+    }));
 
-  if (fileAction === 'view') {
-    const content = await fs.readFile(chosenAction, 'utf-8');
-    console.log(chalk.bold.cyan('\n═════════════════════ SAVED REVIEW REPORT ═════════════════════\n'));
-    console.log(chalk.white(content));
-    console.log(chalk.bold.cyan('\n═══════════════════════════════════════════════════════════════\n'));
-  } else if (fileAction === 'delete') {
-    const confirmDelete = await confirm({
-      message: `Hapus file ${chosenAction}?`,
-      default: true,
+    choices.push({ name: chalk.red('🗑️  Hapus SEMUA report di folder ini'), value: 'clear_all' });
+    choices.push({ name: '🔙 Kembali ke Menu Utama', value: 'back' });
+
+    const chosenAction = await select({
+      message: `Pilih laporan review di ${chalk.yellow(resolved)}:`,
+      choices,
     });
-    if (confirmDelete) {
-      await deleteReportFile(chosenAction);
-      console.log(chalk.green(`\n✔ File report berhasil dihapus.\n`));
+
+    if (chosenAction === 'back') return;
+
+    if (chosenAction === 'clear_all') {
+      const sure = await confirm({
+        message: `Yakin ingin menghapus seluruh (${refreshedReports.length}) file report di ${resolved}?`,
+        default: false,
+      });
+      if (sure) {
+        const deletedCount = await clearAllReports(resolved);
+        console.log(chalk.green(`\n✔ Berhasil menghapus ${deletedCount} file report markdown.\n`));
+      }
+      return;
+    }
+
+    const fileAction = await select({
+      message: `Aksi untuk ${chalk.cyan(chosenAction)}:`,
+      choices: [
+        { name: '📖 Baca isi laporan (View Report)', value: 'view' },
+        { name: chalk.red('🗑️  Hapus file ini (Delete Report)'), value: 'delete' },
+        { name: '🔙 Batal / Pilih File Lain', value: 'cancel' },
+      ],
+    });
+
+    if (fileAction === 'view') {
+      const content = await fs.readFile(chosenAction, 'utf-8');
+      console.log(chalk.bold.cyan('\n═════════════════════ SAVED REVIEW REPORT ═════════════════════\n'));
+      console.log(chalk.white(content));
+      console.log(chalk.bold.cyan('\n═══════════════════════════════════════════════════════════════\n'));
+      await pressEnterToContinue();
+    } else if (fileAction === 'delete') {
+      const confirmDelete = await confirm({
+        message: `Hapus file ini secara permanen?`,
+        default: true,
+      });
+      if (confirmDelete) {
+        await deleteReportFile(chosenAction);
+        console.log(chalk.green(`\n✔ File report berhasil dihapus.\n`));
+      }
     }
   }
 }
 
 async function configureAIProviderUI(currentConfig: AppConfig) {
-  console.log(chalk.bold.cyan('\n⚙️  Pengaturan AI Provider & API Key'));
+  printHeader('Menu Utama > 🤖 Configure AI Provider');
 
-  const provider = await select<AppConfig['provider']>({
+  const provider = await select<AppConfig['provider'] | 'back'>({
     message: 'Pilih AI Provider:',
     choices: [
       { name: '🌐 9router (Multi-model Gateway / ag/*)', value: '9router' },
@@ -332,8 +376,11 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
       { name: '🌌 OpenRouter (OpenRouter API)', value: 'openrouter' },
       { name: '💻 Ollama (Local Self-hosted)', value: 'ollama' },
       { name: '🛠️  Custom OpenAI-Compatible Provider', value: 'custom' },
+      { name: '🔙 Batalkan & Kembali ke Menu Utama', value: 'back' },
     ],
   });
+
+  if (provider === 'back') return;
 
   let baseUrl = '';
   let defaultModel = 'ag/gemini-3.8-flash';
@@ -412,4 +459,29 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
 
   await saveConfig(newConfig);
   console.log(chalk.green(`\n✔ Konfigurasi berhasil disimpan ke ~/.pr-rag/config.json!\n`));
+  await pressEnterToContinue();
+}
+
+async function showStatusUI(inRepo: boolean, config: AppConfig) {
+  printHeader('Menu Utama > ⚙️ System Status');
+  const currentBranch = inRepo ? await getCurrentBranch() : '-';
+  const reportDir = resolveReportDir(config.defaultReportDir || '.rag-reviews');
+
+  console.log(chalk.cyan('─── Status Konfigurasi & Lingkungan ───'));
+  console.log(`Git Repository   : ${inRepo ? chalk.green(`Aktif (Branch: ${currentBranch})`) : chalk.red('Tidak Terdeteksi')}`);
+  console.log(`Vector DB Path   : ${chalk.yellow('~/.pr-rag/db')}`);
+  console.log(`Report Directory : ${chalk.yellow(reportDir)}`);
+  console.log(`Active Provider  : ${chalk.bold.magenta(config.provider)}`);
+  console.log(`Base URL         : ${config.baseUrl || chalk.gray('(Default OpenAI)')}`);
+  console.log(`Default Model    : ${chalk.cyan(config.defaultModel)}`);
+  console.log(`API Key Status   : ${config.apiKey || process.env.OPENAI_API_KEY ? chalk.green('Configured ✅') : chalk.red('Missing ❌')}`);
+  console.log(chalk.cyan('───────────────────────────────────────\n'));
+
+  await pressEnterToContinue();
+}
+
+async function pressEnterToContinue() {
+  await input({
+    message: chalk.gray('Tekan [Enter] untuk kembali ke Menu Utama...'),
+  });
 }
