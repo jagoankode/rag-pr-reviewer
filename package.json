@@ -1,6 +1,6 @@
 {
   "name": "rag-pr-reviewer",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "description": "AI-powered local Pull Request reviewer using embedded RAG & line-by-line convention audit",
   "main": "dist/index.js",
   "bin": {
@@ -43,6 +43,7 @@
     "@ai-sdk/openai": "^4.0.100",
     "@inquirer/prompts": "^8.7.4",
     "@lancedb/lancedb": "^0.40.0",
+    "@qdrant/js-client-rest": "^1.20.0",
     "ai": "^7.0.149",
     "boxen": "^9.0.0",
     "chalk": "^6.0.1",

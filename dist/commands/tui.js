@@ -35,8 +35,11 @@ async function runInteractiveTUI() {
         if (!inRepo) {
             console.log(chalk_1.default.yellow('⚠️  Perhatian: Direktori saat ini bukan git repository. Opsi review dimatikan.\n'));
         }
+        const dbBadge = config.dbType === 'qdrant'
+            ? chalk_1.default.bold.green('🌐 VPS Qdrant (knowlage.jagoankode.site)')
+            : chalk_1.default.bold.blue('💻 Local LanceDB (~/.pr-rag/db)');
         const mainChoice = await (0, prompts_1.select)({
-            message: 'Pilih aksi yang ingin dijalankan:',
+            message: `Pilih aksi [DB Aktif: ${dbBadge}]:`,
             choices: [
                 {
                     name: '🔍 Review Git Changes / PR Branch (Source vs Target)',
@@ -58,6 +61,10 @@ async function runInteractiveTUI() {
                 {
                     name: '📚 Ingest Knowledge / Conventions ke Vector DB',
                     value: 'ingest',
+                },
+                {
+                    name: `💾 Database Storage Mode (${config.dbType === 'qdrant' ? '🌐 VPS Qdrant' : '💻 Local LanceDB'})`,
+                    value: 'config_db',
                 },
                 {
                     name: '📜 View & Manage Review History (Buka / Hapus Report)',
@@ -96,6 +103,9 @@ async function runInteractiveTUI() {
         else if (mainChoice === 'ingest') {
             await ingestWorkflowUI();
         }
+        else if (mainChoice === 'config_db') {
+            await configureDatabaseUI(config);
+        }
         else if (mainChoice === 'history') {
             await viewHistoryUI(config.defaultReportDir || '.rag-reviews');
         }
@@ -106,6 +116,62 @@ async function runInteractiveTUI() {
             await showStatusUI(inRepo, config);
         }
     }
+}
+async function configureDatabaseUI(currentConfig) {
+    printHeader('Menu Utama > 💾 Database Storage Mode');
+    const selectedMode = await (0, prompts_1.select)({
+        message: 'Pilih lokasi Vector Database untuk Knowledge Base tim:',
+        choices: [
+            {
+                name: '🌐 Remote VPS Qdrant (Shared Team Knowledge)',
+                value: 'qdrant',
+                description: 'Menyimpan & menarik aturan dari server Qdrant VPS (Single Source of Truth tim)',
+            },
+            {
+                name: '💻 Local LanceDB (Personal / Offline Mode)',
+                value: 'local',
+                description: 'Menyimpan & menarik aturan secara lokal di disk laptop (~/.pr-rag/db)',
+            },
+            {
+                name: '🔙 Batalkan & Kembali ke Menu Utama',
+                value: 'back',
+            },
+        ],
+    });
+    if (selectedMode === 'back')
+        return;
+    let qdrantUrl = currentConfig.qdrantUrl || 'https://knowlage.jagoankode.site';
+    let qdrantApiKey = currentConfig.qdrantApiKey || '';
+    let qdrantCollection = currentConfig.qdrantCollection || 'guidelines';
+    if (selectedMode === 'qdrant') {
+        qdrantUrl = await (0, prompts_1.input)({
+            message: 'Qdrant VPS Server URL:',
+            default: qdrantUrl,
+            validate: (v) => (v.trim().length > 0 ? true : 'URL tidak boleh kosong'),
+        });
+        qdrantCollection = await (0, prompts_1.input)({
+            message: 'Nama Collection di Qdrant:',
+            default: qdrantCollection,
+            validate: (v) => (v.trim().length > 0 ? true : 'Collection tidak boleh kosong'),
+        });
+        qdrantApiKey = await (0, prompts_1.password)({
+            message: 'Qdrant API Key (tekan Enter jika tanpa autentikasi):',
+            mask: '*',
+        });
+        if (!qdrantApiKey) {
+            qdrantApiKey = currentConfig.qdrantApiKey || '';
+        }
+    }
+    const updatedConfig = {
+        ...currentConfig,
+        dbType: selectedMode,
+        qdrantUrl,
+        qdrantApiKey,
+        qdrantCollection,
+    };
+    await (0, config_js_1.saveConfig)(updatedConfig);
+    console.log(chalk_1.default.green(`\n✔ Database storage mode berhasil dialihkan ke: ${selectedMode === 'qdrant' ? '🌐 VPS Qdrant' : '💻 Local LanceDB'}\n`));
+    await pressEnterToContinue();
 }
 async function reviewWorkflowUI(config) {
     printHeader('Menu Utama > 🔍 Review Git');
@@ -429,6 +495,7 @@ async function configureAIProviderUI(currentConfig) {
         default: currentConfig.defaultReportDir || '.rag-reviews',
     });
     const newConfig = {
+        ...currentConfig,
         provider,
         apiKey,
         baseUrl,
@@ -446,7 +513,14 @@ async function showStatusUI(inRepo, config) {
     const reportDir = (0, history_js_1.resolveReportDir)(config.defaultReportDir || '.rag-reviews');
     console.log(chalk_1.default.cyan('─── Status Konfigurasi & Lingkungan ───'));
     console.log(`Git Repository   : ${inRepo ? chalk_1.default.green(`Aktif (Branch: ${currentBranch})`) : chalk_1.default.red('Tidak Terdeteksi')}`);
-    console.log(`Vector DB Path   : ${chalk_1.default.yellow('~/.pr-rag/db')}`);
+    console.log(`Database Mode    : ${config.dbType === 'qdrant' ? chalk_1.default.bold.green('🌐 Remote VPS Qdrant') : chalk_1.default.bold.blue('💻 Local LanceDB')}`);
+    if (config.dbType === 'qdrant') {
+        console.log(`Qdrant Server    : ${chalk_1.default.yellow(config.qdrantUrl || 'https://knowlage.jagoankode.site')}`);
+        console.log(`Collection Name  : ${chalk_1.default.cyan(config.qdrantCollection || 'guidelines')}`);
+    }
+    else {
+        console.log(`Vector DB Path   : ${chalk_1.default.yellow('~/.pr-rag/db')}`);
+    }
     console.log(`Report Directory : ${chalk_1.default.yellow(reportDir)}`);
     console.log(`Active Provider  : ${chalk_1.default.bold.magenta(config.provider)}`);
     console.log(`Base URL         : ${config.baseUrl || chalk_1.default.gray('(Default OpenAI)')}`);

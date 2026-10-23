@@ -1,9 +1,10 @@
 import * as lancedb from '@lancedb/lancedb';
+import { QdrantClient } from '@qdrant/js-client-rest';
 import { embed, embedMany } from 'ai';
 import path from 'path';
 import os from 'os';
 import { DocChunk } from './chunker.js';
-import { getActiveAIProvider } from './config.js';
+import { getActiveAIProvider, loadConfig } from './config.js';
 import { createTfIdfIndex } from './local-embedder.js';
 import { getNormHash } from './dedup.js';
 
@@ -21,6 +22,7 @@ export interface GuidelineRecord {
 }
 
 let dbInstance: lancedb.Connection | null = null;
+let qdrantInstance: QdrantClient | null = null;
 
 export async function getDb(): Promise<lancedb.Connection> {
   if (!dbInstance) {
@@ -29,31 +31,37 @@ export async function getDb(): Promise<lancedb.Connection> {
   return dbInstance;
 }
 
-/**
- * Mengambil semua daftar guidelines/aturan yang tersimpan di LanceDB
- */
-export async function listAllIndexedGuidelines(): Promise<{ id: string; source: string; title: string; content: string }[]> {
-  const db = await getDb();
-  const tableNames = await db.tableNames();
-  if (!tableNames.includes(TABLE_NAME)) {
-    return [];
+export async function getQdrantClient(): Promise<{ client: QdrantClient; collection: string }> {
+  const config = await loadConfig();
+  const url = config.qdrantUrl || 'https://knowlage.jagoankode.site';
+  const apiKey = config.qdrantApiKey || undefined;
+  const collection = config.qdrantCollection || 'guidelines';
+
+  if (!qdrantInstance) {
+    qdrantInstance = new QdrantClient({ url, apiKey });
   }
-  const table = await db.openTable(TABLE_NAME);
-  const rows = await table.query().toArray();
-  return rows.map((r: any) => ({
-    id: r.id,
-    source: r.source,
-    title: r.title,
-    content: r.content,
-  }));
+
+  // Pastikan koleksi ada di Qdrant
+  const collections = await qdrantInstance.getCollections();
+  const exists = collections.collections.some((c) => c.name === collection);
+  if (!exists) {
+    // Default 256 dimensi untuk TF-IDF / local vectorizer atau 1536 untuk openai text-embedding-3-small
+    const vectorSize = config.provider === '9router' || config.embeddingModel === 'local' ? 256 : 1536;
+    await qdrantInstance.createCollection(collection, {
+      vectors: {
+        size: vectorSize,
+        distance: 'Cosine',
+      },
+    });
+  }
+
+  return { client: qdrantInstance, collection };
 }
 
 /**
  * Generate embeddings untuk array teks
  */
-async function generateVectors(
-  texts: string[]
-): Promise<number[][]> {
+async function generateVectors(texts: string[]): Promise<number[][]> {
   const { client, config } = await getActiveAIProvider();
   const embModel = config.embeddingModel || 'text-embedding-3-small';
 
@@ -81,14 +89,110 @@ export interface InsertResult {
 }
 
 /**
- * Ingest chunk dokumen / knowledge ke LanceDB dengan DEDUP (anti duplikat)
- * Mendukung backward-compatibility dengan table LanceDB yang lama (tidak crash jika schema lama belum ada contentHash).
+ * Mengambil semua daftar guidelines/aturan yang tersimpan (Local LanceDB atau VPS Qdrant)
+ */
+export async function listAllIndexedGuidelines(): Promise<{ id: string; source: string; title: string; content: string }[]> {
+  const config = await loadConfig();
+
+  if (config.dbType === 'qdrant') {
+    try {
+      const { client, collection } = await getQdrantClient();
+      const points = await client.scroll(collection, { limit: 100, with_payload: true });
+      return points.points.map((p) => {
+        const payload = p.payload as any;
+        return {
+          id: String(p.id),
+          source: payload?.source || 'remote_vps',
+          title: payload?.title || 'Untitled',
+          content: payload?.content || '',
+        };
+      });
+    } catch (err: any) {
+      throw new Error(`Gagal membaca data dari Qdrant VPS: ${err.message}`);
+    }
+  }
+
+  // Local LanceDB fallback
+  const db = await getDb();
+  const tableNames = await db.tableNames();
+  if (!tableNames.includes(TABLE_NAME)) {
+    return [];
+  }
+  const table = await db.openTable(TABLE_NAME);
+  const rows = await table.query().toArray();
+  return rows.map((r: any) => ({
+    id: r.id,
+    source: r.source,
+    title: r.title,
+    content: r.content,
+  }));
+}
+
+/**
+ * Ingest chunk dokumen / knowledge ke database (Local LanceDB atau Remote Qdrant VPS)
  */
 export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
   if (chunks.length === 0) {
     return { insertedCount: 0, duplicateCount: 0, skippedTitles: [] };
   }
 
+  const config = await loadConfig();
+
+  // ROUTE 1: REMOTE QDRANT VPS
+  if (config.dbType === 'qdrant') {
+    const { client, collection } = await getQdrantClient();
+
+    // Ambil points eksisting untuk hash matching anti-duplikat
+    const existingPoints = await client.scroll(collection, { limit: 1000, with_payload: true });
+    const existingHashes = new Set(
+      existingPoints.points.map((p: any) => p.payload?.contentHash || getNormHash(p.payload?.content || ''))
+    );
+
+    const uniqueChunks: DocChunk[] = [];
+    const skippedTitles: string[] = [];
+
+    for (const chunk of chunks) {
+      const hash = getNormHash(chunk.content);
+      if (existingHashes.has(hash)) {
+        skippedTitles.push(chunk.title);
+      } else {
+        existingHashes.add(hash);
+        uniqueChunks.push(chunk);
+      }
+    }
+
+    if (uniqueChunks.length === 0) {
+      return { insertedCount: 0, duplicateCount: skippedTitles.length, skippedTitles };
+    }
+
+    const texts = uniqueChunks.map((c) => `${c.title}\n${c.content}`);
+    const vectors = await generateVectors(texts);
+
+    const points = uniqueChunks.map((chunk, i) => ({
+      id: typeof chunk.id === 'string' && /^[0-9a-fA-F-]+$/.test(chunk.id) ? chunk.id : Math.floor(Math.random() * 1000000000),
+      vector: vectors[i],
+      payload: {
+        originalId: chunk.id,
+        source: chunk.source,
+        title: chunk.title,
+        content: chunk.content,
+        contentHash: getNormHash(chunk.content),
+      },
+    }));
+
+    await client.upsert(collection, {
+      wait: true,
+      points,
+    });
+
+    return {
+      insertedCount: points.length,
+      duplicateCount: skippedTitles.length,
+      skippedTitles,
+    };
+  }
+
+  // ROUTE 2: LOCAL LANCEDB
   const db = await getDb();
   const tableNames = await db.tableNames();
   let existingRecords: any[] = [];
@@ -105,7 +209,6 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
     }
   }
 
-  // Hash matching untuk mencegah duplikasi
   const existingHashes = new Set(
     existingRecords.map((r: any) => r.contentHash || getNormHash(r.content))
   );
@@ -131,7 +234,6 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
     };
   }
 
-  // Generate vector embeddings untuk chunk baru
   const texts = uniqueChunks.map((c) => `${c.title}\n${c.content}`);
   const vectors = await generateVectors(texts);
 
@@ -143,7 +245,6 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
       content: chunk.content,
       vector: vectors[i],
     };
-    // Hanya tambahkan field contentHash jika tabel baru atau tabel lama sudah mendukung schema tersebut
     if (!tableNames.includes(TABLE_NAME) || tableHasContentHash) {
       rec.contentHash = getNormHash(chunk.content);
     }
@@ -182,12 +283,60 @@ export async function ingestDirectKnowledge(
 }
 
 /**
- * Mencari context guidelines yang paling relevan dengan query/diff
+ * Mencari context guidelines yang paling relevan dengan query/diff (Local LanceDB atau Qdrant VPS)
  */
 export async function searchRelevantGuidelines(
   query: string,
   limit: number = 5
 ): Promise<DocChunk[]> {
+  const config = await loadConfig();
+
+  // ROUTE 1: REMOTE QDRANT VPS
+  if (config.dbType === 'qdrant') {
+    try {
+      const { client, collection } = await getQdrantClient();
+      const points = await client.scroll(collection, { limit: 100, with_payload: true });
+      if (points.points.length === 0) return [];
+
+      const corpus = points.points.map((p: any) => `${p.payload?.title}\n${p.payload?.content}`);
+      let queryVector: number[];
+
+      if (config.provider === '9router' || config.embeddingModel === 'local') {
+        const vectorizer = createTfIdfIndex(corpus);
+        queryVector = vectorizer(query.slice(0, 4000));
+      } else {
+        const { client: aiClient } = await getActiveAIProvider();
+        const embModel = config.embeddingModel || 'text-embedding-3-small';
+        try {
+          const { embedding } = await embed({
+            model: aiClient.embedding(embModel),
+            value: query.slice(0, 4000),
+          });
+          queryVector = embedding;
+        } catch {
+          const vectorizer = createTfIdfIndex(corpus);
+          queryVector = vectorizer(query.slice(0, 4000));
+        }
+      }
+
+      const searchResults = await client.query(collection, {
+        query: queryVector,
+        limit,
+        with_payload: true,
+      });
+
+      return searchResults.points.map((res: any) => ({
+        id: String(res.id),
+        source: res.payload?.source || 'remote_vps',
+        title: res.payload?.title || 'Untitled',
+        content: res.payload?.content || '',
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  // ROUTE 2: LOCAL LANCEDB
   const db = await getDb();
   const tableNames = await db.tableNames();
 
@@ -200,11 +349,11 @@ export async function searchRelevantGuidelines(
   if (rows.length === 0) return [];
 
   const corpus = rows.map((r: any) => `${r.title}\n${r.content}`);
-  const { client, config } = await getActiveAIProvider();
-  const embModel = config.embeddingModel || 'text-embedding-3-small';
+  const { client, config: aiConfig } = await getActiveAIProvider();
+  const embModel = aiConfig.embeddingModel || 'text-embedding-3-small';
 
   let queryVector: number[];
-  if (config.provider === '9router' || embModel === 'local') {
+  if (aiConfig.provider === '9router' || embModel === 'local') {
     const vectorizer = createTfIdfIndex(corpus);
     queryVector = vectorizer(query.slice(0, 4000));
   } else {

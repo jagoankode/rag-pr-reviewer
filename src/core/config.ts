@@ -3,13 +3,20 @@ import path from 'path';
 import os from 'os';
 import { createOpenAI } from '@ai-sdk/openai';
 
+export type DatabaseType = 'local' | 'qdrant';
+
 export interface AppConfig {
   provider: 'openai' | '9router' | 'openrouter' | 'ollama' | 'custom';
   apiKey: string;
   baseUrl?: string;
   defaultModel: string;
   embeddingModel?: string;
-  defaultReportDir?: string; // Default directory untuk simpan laporan markdown
+  defaultReportDir?: string;
+  // Konfigurasi Database (Local LanceDB vs Remote Qdrant VPS)
+  dbType: DatabaseType;
+  qdrantUrl?: string;
+  qdrantApiKey?: string;
+  qdrantCollection?: string;
 }
 
 const CONFIG_DIR = path.join(os.homedir(), '.pr-rag');
@@ -22,6 +29,10 @@ const DEFAULT_CONFIG: AppConfig = {
   defaultModel: 'gpt-4o',
   embeddingModel: 'text-embedding-3-small',
   defaultReportDir: '.rag-reviews',
+  dbType: 'local',
+  qdrantUrl: 'https://knowlage.jagoankode.site',
+  qdrantApiKey: '',
+  qdrantCollection: 'guidelines',
 };
 
 export async function loadConfig(): Promise<AppConfig> {

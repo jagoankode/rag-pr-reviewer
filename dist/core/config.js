@@ -19,6 +19,10 @@ const DEFAULT_CONFIG = {
     defaultModel: 'gpt-4o',
     embeddingModel: 'text-embedding-3-small',
     defaultReportDir: '.rag-reviews',
+    dbType: 'local',
+    qdrantUrl: 'https://knowlage.jagoankode.site',
+    qdrantApiKey: '',
+    qdrantCollection: 'guidelines',
 };
 async function loadConfig() {
     try {
