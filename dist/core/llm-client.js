@@ -8,7 +8,7 @@ const config_js_1 = require("./config.js");
  * Fungsi ini menangani SSE parsing dan standard JSON secara native tanpa ketergantungan
  * pada parser kaku bawaan library luar.
  */
-async function callLLM(prompt, modelOverride) {
+async function callLLM(prompt, modelOverride, signal) {
     const config = await (0, config_js_1.loadConfig)();
     const apiKey = process.env.OPENAI_API_KEY || config.apiKey;
     const rawBaseUrl = process.env.OPENAI_BASE_URL || config.baseUrl || 'https://api.openai.com/v1';
@@ -24,6 +24,7 @@ async function callLLM(prompt, modelOverride) {
     const res = await fetch(url, {
         method: 'POST',
         headers,
+        signal,
         body: JSON.stringify({
             model,
             messages: [

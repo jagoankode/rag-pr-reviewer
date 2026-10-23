@@ -6,7 +6,7 @@ import { AppConfig, loadConfig } from './config.js';
  * Fungsi ini menangani SSE parsing dan standard JSON secara native tanpa ketergantungan
  * pada parser kaku bawaan library luar.
  */
-export async function callLLM(prompt: string, modelOverride?: string): Promise<string> {
+export async function callLLM(prompt: string, modelOverride?: string, signal?: AbortSignal): Promise<string> {
   const config = await loadConfig();
   const apiKey = process.env.OPENAI_API_KEY || config.apiKey;
   const rawBaseUrl = process.env.OPENAI_BASE_URL || config.baseUrl || 'https://api.openai.com/v1';
@@ -25,6 +25,7 @@ export async function callLLM(prompt: string, modelOverride?: string): Promise<s
   const res = await fetch(url, {
     method: 'POST',
     headers,
+    signal,
     body: JSON.stringify({
       model,
       messages: [

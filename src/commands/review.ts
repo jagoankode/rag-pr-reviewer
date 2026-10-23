@@ -6,6 +6,7 @@ import { searchRelevantGuidelines } from '../core/db.js';
 import { saveReviewReport } from '../core/history.js';
 import { loadConfig } from '../core/config.js';
 import { callLLM } from '../core/llm-client.js';
+import { setActiveAbortController, createProcessAbortController, clearActiveAbortController } from '../core/nav.js';
 import { FileReviewResult, PRReviewResult, LineViolation } from '../core/schema.js';
 
 export interface ReviewOptions {
@@ -85,7 +86,8 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     return;
   }
 
-  const spinner = ora(chalk.blue('Mengambil git diff...')).start();
+  const abortController = createProcessAbortController();
+  const spinner = ora(chalk.blue('Mengambil git diff... (Tekan Ctrl+C untuk batalkan)')).start();
 
   try {
     const targetBranch = options.target || options.branch;
@@ -104,6 +106,11 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
       sourceBranch: sourceBranch,
       fetchRemote: options.fetchRemote,
     });
+
+    if (abortController.signal.aborted) {
+      spinner.info(chalk.yellow('\nProses review dibatalkan.'));
+      return;
+    }
 
     if (!rawDiff || rawDiff.trim().length === 0) {
       spinner.info(
@@ -139,10 +146,15 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
 
     // Iterasi per file dengan progress indicator real-time [1 dari N file]
     for (let i = 0; i < totalFiles; i++) {
+      if (abortController.signal.aborted) {
+        console.log(chalk.yellow('\n⚠️  Review dibatalkan oleh pengguna di tengah proses.'));
+        break;
+      }
+
       const fileDiff = fileDiffs[i];
       const progressLabel = `[${i + 1}/${totalFiles}]`;
       const fileSpinner = ora(
-        chalk.magenta(`${progressLabel} Menganalisis ${chalk.bold.underline(fileDiff.file)} (${fileDiff.addedLinesCount} baris)...`)
+        chalk.magenta(`${progressLabel} Menganalisis ${chalk.bold.underline(fileDiff.file)} (${fileDiff.addedLinesCount} baris)... (Ctrl+C: Batal)`)
       ).start();
 
       try {
@@ -150,36 +162,45 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
         let relevantRules: string[] = [];
         try {
           const chunks = await searchRelevantGuidelines(`${fileDiff.file}\n${fileDiff.annotatedText}`, options.limit || 5);
-          relevantRules = chunks.map((c) => `[Source: ${c.title}]\n${c.content}`);
+          relevantRules = chunks.map((c) => `[Rule Title: ${c.title}]\n${c.content}`);
         } catch {
           // fallback jika db kosong
         }
 
-        const prompt = `You are a strict Senior Tech Lead and Code Reviewer.
-Audit the following file changes against the provided code conventions.
+        // STRICT GROUNDING: Jika tidak ada rule sama sekali di RAG/Qdrant, JANGAN izinkan AI berasumsi!
+        if (relevantRules.length === 0) {
+          fileSpinner.succeed(chalk.gray(`${progressLabel} ${fileDiff.file} ➔ Bersih (Tidak ada aturan terkait di Vector DB)`));
+          continue;
+        }
 
-${
-  relevantRules.length > 0
-    ? `### Relevant Coding Standards & Architecture Rules:\n${relevantRules.join('\n\n---\n\n')}`
-    : 'Standard industry conventions: enforce strict typing (no any), error handling, and clean architecture.'
-}
+        const prompt = `You are a strict Code Convention Auditor.
+Your ONLY job is to verify if this code violates the EXPLICIT registered conventions provided below.
 
-### Guidelines for Review:
-1. Review newly added or modified lines marked with \`+ L<number>:\`.
-2. Map every convention violation directly to its exact \`file\` and \`line\` number.
-3. If no violation is found, return an empty violations array.
-4. SuggestedFix must be a string snippet or null if not applicable.
+### REGISTERED TEAM CONVENTIONS (EXACT TRUTH):
+${relevantRules.join('\n\n---\n\n')}
 
-### File Diff to Review:
+### STRICT AUDIT RULES:
+1. ZERO ASSUMPTIONS: You must ONLY flag violations against the exact rules listed in "REGISTERED TEAM CONVENTIONS" above.
+2. DO NOT use generic best practices, personal styling preferences, clean architecture opinions, or external internet standards.
+3. If an added line does NOT directly violate any rule in the REGISTERED TEAM CONVENTIONS above, it is 100% VALID. Return empty violations array [].
+4. Every violation MUST cite the exact [Rule Title] from the registered conventions as its "rule" property.
+5. Only inspect newly added/modified lines marked with \`+ L<number>:\`.
+6. SuggestedFix must be a replacement string snippet or null if not applicable.
+
+### File Diff to Audit:
 ${fileDiff.annotatedText}
 `;
 
         let object: FileReviewResult | null = null;
 
         try {
-          const rawResponse = await callLLM(prompt, modelName);
+          const rawResponse = await callLLM(prompt, modelName, abortController.signal);
           object = extractReviewResult(rawResponse);
         } catch (callErr: any) {
+          if (abortController.signal.aborted || callErr.name === 'AbortError') {
+            fileSpinner.warn(chalk.yellow(`${progressLabel} ${fileDiff.file} ➔ Dibatalkan (Aborted).`));
+            break;
+          }
           throw callErr;
         }
 
@@ -196,8 +217,17 @@ ${fileDiff.annotatedText}
           generalFeedback.push(...object.notes);
         }
       } catch (err: any) {
+        if (abortController.signal.aborted || err.name === 'AbortError') {
+          fileSpinner.warn(chalk.yellow(`${progressLabel} ${fileDiff.file} ➔ Dibatalkan.`));
+          break;
+        }
         fileSpinner.fail(chalk.red(`${progressLabel} ${fileDiff.file} ➔ Gagal dianalisis: ${err.message}`));
       }
+    }
+
+    if (abortController.signal.aborted) {
+      console.log(chalk.yellow('\nℹ️  Proses review dihentikan dan kembali ke menu.\n'));
+      return;
     }
 
     // Tentukan status akhir PR

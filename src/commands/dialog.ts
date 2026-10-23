@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import ora from 'ora';
-import { input, select } from '@inquirer/prompts';
+import { select, input } from '../core/nav.js';
 import { generateText } from 'ai';
 import { getActiveAIProvider } from '../core/config.js';
 import { searchRelevantGuidelines, listAllIndexedGuidelines, insertChunks } from '../core/db.js';

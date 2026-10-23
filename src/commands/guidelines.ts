@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { select } from '@inquirer/prompts';
+import { select } from '../core/nav.js';
 import { listAllIndexedGuidelines } from '../core/db.js';
 
 export async function inspectGuidelinesCommand(): Promise<void> {

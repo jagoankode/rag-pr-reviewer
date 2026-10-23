@@ -5,6 +5,7 @@ process.env.AI_SDK_LOG_WARNINGS = 'false';
 import { Command } from 'commander';
 import chalk from 'chalk';
 import dotenv from 'dotenv';
+import { initNavigationGuard } from './core/nav.js';
 import { ingestCommand } from './commands/ingest.js';
 import { reviewCommand } from './commands/review.js';
 import { learnFeatureCommand } from './commands/learn.js';
@@ -12,6 +13,7 @@ import { runInteractiveTUI } from './commands/tui.js';
 import { getAppVersion } from './core/version.js';
 
 dotenv.config();
+initNavigationGuard();
 
 const program = new Command();
 

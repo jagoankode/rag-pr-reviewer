@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import boxen from 'boxen';
-import { select, input, confirm, password } from '@inquirer/prompts';
+import { select, input, confirm, password } from '../core/nav.js';
 import { ingestCommand, ingestDirectRuleCommand } from './ingest.js';
 import { reviewCommand } from './review.js';
 import { inspectGuidelinesCommand } from './guidelines.js';
@@ -120,9 +120,14 @@ export async function runInteractiveTUI() {
 }
 
 async function configureDatabaseUI(currentConfig: AppConfig) {
+  let selectedMode: DatabaseType | 'back' = currentConfig.dbType || 'qdrant';
+  let qdrantUrl = currentConfig.qdrantUrl || 'https://knowlage.jagoankode.site';
+  let qdrantApiKey = currentConfig.qdrantApiKey || '';
+  let qdrantCollection = currentConfig.qdrantCollection || 'guidelines';
+
   printHeader('Menu Utama > 💾 Database Storage Mode');
 
-  const selectedMode = await select<DatabaseType | 'back'>({
+  const chosenMode = await select<DatabaseType | 'back'>({
     message: 'Pilih lokasi Vector Database untuk Knowledge Base tim:',
     choices: [
       {
@@ -142,11 +147,8 @@ async function configureDatabaseUI(currentConfig: AppConfig) {
     ],
   });
 
-  if (selectedMode === 'back') return;
-
-  let qdrantUrl = currentConfig.qdrantUrl || 'https://knowlage.jagoankode.site';
-  let qdrantApiKey = currentConfig.qdrantApiKey || '';
-  let qdrantCollection = currentConfig.qdrantCollection || 'guidelines';
+  if (chosenMode === 'back') return;
+  selectedMode = chosenMode;
 
   if (selectedMode === 'qdrant') {
     let inputUrl = await input({
@@ -166,26 +168,98 @@ async function configureDatabaseUI(currentConfig: AppConfig) {
       validate: (v) => (v.trim().length > 0 ? true : 'Collection tidak boleh kosong'),
     });
 
-    qdrantApiKey = await password({
+    const enteredKey = await password({
       message: 'Qdrant API Key (tekan Enter jika tanpa autentikasi):',
       mask: '*',
     });
-    if (!qdrantApiKey) {
-      qdrantApiKey = currentConfig.qdrantApiKey || '';
+    if (enteredKey && enteredKey !== 'back') {
+      qdrantApiKey = enteredKey;
     }
   }
 
-  const updatedConfig: AppConfig = {
-    ...currentConfig,
-    dbType: selectedMode,
-    qdrantUrl,
-    qdrantApiKey,
-    qdrantCollection,
-  };
+  // REVIEW & EDIT CONFIRMATION LOOP UNTUK DATABASE
+  while (true) {
+    printHeader('Menu Utama > 💾 Database Storage Mode > Konfirmasi');
 
-  await saveConfig(updatedConfig);
-  console.log(chalk.green(`\n✔ Database storage mode berhasil dialihkan ke: ${selectedMode === 'qdrant' ? '🌐 VPS Qdrant' : '💻 Local LanceDB'}\n`));
-  await pressEnterToContinue();
+    console.log(chalk.cyan('─── Ringkasan Konfigurasi Vector Database ───'));
+    console.log(`1. Mode Storage : ${selectedMode === 'qdrant' ? chalk.bold.green('🌐 Remote VPS Qdrant') : chalk.bold.blue('💻 Local LanceDB')}`);
+    if (selectedMode === 'qdrant') {
+      console.log(`2. Server URL   : ${chalk.yellow(qdrantUrl)}`);
+      console.log(`3. Collection   : ${chalk.cyan(qdrantCollection)}`);
+      console.log(`4. API Key      : ${qdrantApiKey ? chalk.green('Configured (***)') : chalk.gray('(Tanpa Key)')}`);
+    } else {
+      console.log(`2. Path Disk    : ${chalk.yellow('~/.lumio/db')}`);
+    }
+    console.log(chalk.cyan('─────────────────────────────────────────────\n'));
+
+    const dbConfirm = await select({
+      message: 'Apakah konfigurasi database sudah benar?',
+      choices: [
+        { name: '✅ Ya, Simpan & Terapkan', value: 'save' },
+        ...(selectedMode === 'qdrant' ? [{ name: '✏️  Koreksi URL / Collection / Key (Edit Typo)', value: 'edit' }] : []),
+        { name: '🔙 Batalkan & Kembali ke Menu Utama', value: 'cancel' },
+      ],
+    });
+
+    if (dbConfirm === 'cancel' || dbConfirm === 'back') {
+      console.log(chalk.gray('\nPengaturan database dibatalkan.\n'));
+      await pressEnterToContinue();
+      return;
+    }
+
+    if (dbConfirm === 'save') {
+      const updatedConfig: AppConfig = {
+        ...currentConfig,
+        dbType: selectedMode,
+        qdrantUrl,
+        qdrantApiKey,
+        qdrantCollection,
+      };
+
+      await saveConfig(updatedConfig);
+      console.log(chalk.green(`\n✔ Database storage mode berhasil dialihkan ke: ${selectedMode === 'qdrant' ? '🌐 VPS Qdrant' : '💻 Local LanceDB'}\n`));
+      await pressEnterToContinue();
+      return;
+    }
+
+    if (dbConfirm === 'edit') {
+      const field = await select({
+        message: 'Pilih parameter Qdrant yang ingin dikoreksi:',
+        choices: [
+          { name: `🌐 Server URL [${qdrantUrl}]`, value: 'url' },
+          { name: `📂 Collection Name [${qdrantCollection}]`, value: 'collection' },
+          { name: `🔑 API Key`, value: 'key' },
+          { name: '🔙 Selesai Edit', value: 'back' },
+        ],
+      });
+
+      if (field === 'url') {
+        let inputUrl = await input({
+          message: 'Koreksi Qdrant URL:',
+          default: qdrantUrl,
+        });
+        inputUrl = inputUrl.trim();
+        if (inputUrl && inputUrl !== 'back') {
+          if (!inputUrl.startsWith('http://') && !inputUrl.startsWith('https://')) {
+            inputUrl = `https://${inputUrl}`;
+          }
+          qdrantUrl = inputUrl;
+        }
+      } else if (field === 'collection') {
+        const val = await input({
+          message: 'Koreksi Nama Collection:',
+          default: qdrantCollection,
+        });
+        if (val && val !== 'back') qdrantCollection = val.trim();
+      } else if (field === 'key') {
+        const val = await password({
+          message: 'Masukkan API Key baru (atau Enter untuk kosong):',
+          mask: '*',
+        });
+        if (val !== 'back') qdrantApiKey = val.trim();
+      }
+    }
+  }
 }
 
 async function reviewWorkflowUI(config: AppConfig) {
@@ -453,9 +527,17 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
 }
 
 async function configureAIProviderUI(currentConfig: AppConfig) {
+  let provider = currentConfig.provider || '9router';
+  let baseUrl = currentConfig.baseUrl || (provider === '9router' ? 'https://api.9router.com/v1' : '');
+  let defaultModel = currentConfig.defaultModel || 'ag/gemini-3.8-flash';
+  let apiKey = currentConfig.apiKey || '';
+  let defaultReportDir = currentConfig.defaultReportDir || '.lumio-reviews';
+  let embeddingModel = currentConfig.embeddingModel || 'local';
+
+  // Wizard awal jika user baru pertama kali atau memilih konfigurasi
   printHeader('Menu Utama > 🤖 Configure AI Provider');
 
-  const provider = await select<AppConfig['provider'] | 'back'>({
+  const selectedProvider = await select<AppConfig['provider'] | 'back'>({
     message: 'Pilih AI Provider:',
     choices: [
       { name: '🌐 9router (Multi-model Gateway / ag/*)', value: '9router' },
@@ -467,11 +549,8 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
     ],
   });
 
-  if (provider === 'back') return;
-
-  let baseUrl = '';
-  let defaultModel = 'ag/gemini-3.8-flash';
-  let embeddingModel = 'local';
+  if (selectedProvider === 'back') return;
+  provider = selectedProvider;
 
   if (provider === '9router') {
     baseUrl = await input({
@@ -519,35 +598,113 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
     embeddingModel = 'local';
   }
 
-  let apiKey = '';
   if (provider !== 'ollama') {
-    apiKey = await password({
+    const enteredKey = await password({
       message: `Masukkan API Key untuk ${provider} (kosongkan jika tidak ingin mengubah):`,
       mask: '*',
     });
-    if (!apiKey) {
-      apiKey = currentConfig.apiKey;
+    if (enteredKey && enteredKey !== 'back') {
+      apiKey = enteredKey;
     }
   }
 
-  const defaultReportDir = await input({
+  const enteredDir = await input({
     message: 'Default folder simpan laporan review markdown:',
     default: currentConfig.defaultReportDir || '.lumio-reviews',
   });
+  if (enteredDir && enteredDir !== 'back') {
+    defaultReportDir = enteredDir;
+  }
 
-  const newConfig: AppConfig = {
-    ...currentConfig,
-    provider,
-    apiKey,
-    baseUrl,
-    defaultModel,
-    embeddingModel,
-    defaultReportDir,
-  };
+  // REVIEW & EDIT CONFIRMATION LOOP (Anti-Typo Safeguard)
+  while (true) {
+    printHeader('Menu Utama > 🤖 Configure AI Provider > Konfirmasi');
 
-  await saveConfig(newConfig);
-  console.log(chalk.green(`\n✔ Konfigurasi berhasil disimpan ke ~/.lumio/config.json!\n`));
-  await pressEnterToContinue();
+    const maskedKey = apiKey ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : chalk.gray('(Tidak ada / kosong)');
+
+    console.log(chalk.cyan('─── Ringkasan Konfigurasi AI (Cek Typo Sebelum Simpan) ───'));
+    console.log(`1. Provider      : ${chalk.bold.yellow(provider)}`);
+    console.log(`2. Base URL      : ${chalk.white(baseUrl || chalk.gray('(Default SDK)'))}`);
+    console.log(`3. Default Model : ${chalk.bold.green(defaultModel)}`);
+    console.log(`4. API Key       : ${chalk.white(maskedKey)}`);
+    console.log(`5. Report Dir    : ${chalk.white(defaultReportDir)}`);
+    console.log(chalk.cyan('──────────────────────────────────────────────────────────\n'));
+
+    const reviewAction = await select({
+      message: 'Apakah konfigurasi di atas sudah sesuai?',
+      choices: [
+        { name: '✅ Ya, Simpan & Terapkan Konfigurasi', value: 'save' },
+        { name: '✏️  Edit Field Tertentu (Koreksi Typo)', value: 'edit_field' },
+        { name: '🔄 Setup Ulang dari Awal', value: 'restart' },
+        { name: '🔙 Batalkan & Kembali ke Menu Utama (Tanpa Simpan)', value: 'cancel' },
+      ],
+    });
+
+    if (reviewAction === 'cancel' || reviewAction === 'back') {
+      console.log(chalk.gray('\nPerubahan konfigurasi AI dibatalkan.\n'));
+      await pressEnterToContinue();
+      return;
+    }
+
+    if (reviewAction === 'save') {
+      const newConfig: AppConfig = {
+        ...currentConfig,
+        provider,
+        apiKey,
+        baseUrl,
+        defaultModel,
+        embeddingModel,
+        defaultReportDir,
+      };
+      await saveConfig(newConfig);
+      console.log(chalk.green(`\n✔ Konfigurasi berhasil disimpan ke ~/.lumio/config.json!\n`));
+      await pressEnterToContinue();
+      return;
+    }
+
+    if (reviewAction === 'restart') {
+      return await configureAIProviderUI(currentConfig);
+    }
+
+    if (reviewAction === 'edit_field') {
+      const fieldToEdit = await select({
+        message: 'Pilih data yang ingin diperbaiki:',
+        choices: [
+          { name: `🌐 Base URL [${baseUrl}]`, value: 'baseUrl' },
+          { name: `⚡ Default Model [${defaultModel}]`, value: 'model' },
+          { name: `🔑 API Key`, value: 'apiKey' },
+          { name: `📁 Report Dir [${defaultReportDir}]`, value: 'reportDir' },
+          { name: '🔙 Selesai Edit (Kembali ke Ringkasan)', value: 'back' },
+        ],
+      });
+
+      if (fieldToEdit === 'baseUrl') {
+        const val = await input({
+          message: 'Koreksi Base URL:',
+          default: baseUrl,
+        });
+        if (val && val !== 'back') baseUrl = val.trim();
+      } else if (fieldToEdit === 'model') {
+        const val = await input({
+          message: 'Koreksi Default Model AI:',
+          default: defaultModel,
+        });
+        if (val && val !== 'back') defaultModel = val.trim();
+      } else if (fieldToEdit === 'apiKey') {
+        const val = await password({
+          message: 'Masukkan API Key baru:',
+          mask: '*',
+        });
+        if (val && val !== 'back') apiKey = val.trim();
+      } else if (fieldToEdit === 'reportDir') {
+        const val = await input({
+          message: 'Koreksi Report Dir:',
+          default: defaultReportDir,
+        });
+        if (val && val !== 'back') defaultReportDir = val.trim();
+      }
+    }
+  }
 }
 
 async function showStatusUI(inRepo: boolean, config: AppConfig) {

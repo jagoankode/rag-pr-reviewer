@@ -5,7 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.inspectGuidelinesCommand = inspectGuidelinesCommand;
 const chalk_1 = __importDefault(require("chalk"));
-const prompts_1 = require("@inquirer/prompts");
+const nav_js_1 = require("../core/nav.js");
 const db_js_1 = require("../core/db.js");
 async function inspectGuidelinesCommand() {
     const guidelines = await (0, db_js_1.listAllIndexedGuidelines)();
@@ -21,7 +21,7 @@ async function inspectGuidelinesCommand() {
     }));
     choices.push({ name: '🔙 Kembali ke menu utama', value: 'back' });
     while (true) {
-        const chosenId = await (0, prompts_1.select)({
+        const chosenId = await (0, nav_js_1.select)({
             message: 'Pilih aturan untuk melihat detail isi teksnya:',
             choices,
         });

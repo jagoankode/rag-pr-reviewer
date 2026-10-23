@@ -6,7 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.runInteractiveKnowledgeDialog = runInteractiveKnowledgeDialog;
 const chalk_1 = __importDefault(require("chalk"));
 const ora_1 = __importDefault(require("ora"));
-const prompts_1 = require("@inquirer/prompts");
+const nav_js_1 = require("../core/nav.js");
 const ai_1 = require("ai");
 const config_js_1 = require("../core/config.js");
 const db_js_1 = require("../core/db.js");
@@ -30,7 +30,7 @@ async function runInteractiveKnowledgeDialog() {
     // Riwayat obrolan dalam sesi ini
     const chatHistory = [];
     while (true) {
-        const userPrompt = await (0, prompts_1.input)({
+        const userPrompt = await (0, nav_js_1.input)({
             message: chalk_1.default.bold.green('Anda :'),
         });
         const cleaned = userPrompt.trim();
@@ -92,7 +92,7 @@ ${knowledgeContext}
                 console.log('');
             }
             // Beri opsi interaktif cepat
-            const quickAction = await (0, prompts_1.select)({
+            const quickAction = await (0, nav_js_1.select)({
                 message: 'Langkah selanjutnya:',
                 choices: [
                     { name: '💬 Lanjut mengobrol / bertanya', value: 'continue' },
@@ -104,12 +104,12 @@ ${knowledgeContext}
                 break;
             }
             else if (quickAction === 'save') {
-                const ruleTitle = await (0, prompts_1.input)({
+                const ruleTitle = await (0, nav_js_1.input)({
                     message: 'Beri judul aturan baru ini:',
                     default: cleaned.slice(0, 50),
                     validate: (v) => (v.trim().length > 0 ? true : 'Judul tidak boleh kosong'),
                 });
-                const ruleContent = await (0, prompts_1.input)({
+                const ruleContent = await (0, nav_js_1.input)({
                     message: 'Isi spesifikasi aturan:',
                     default: cleaned,
                     validate: (v) => (v.trim().length > 0 ? true : 'Isi aturan tidak boleh kosong'),

@@ -9,12 +9,14 @@ process.env.AI_SDK_LOG_WARNINGS = 'false';
 const commander_1 = require("commander");
 const chalk_1 = __importDefault(require("chalk"));
 const dotenv_1 = __importDefault(require("dotenv"));
+const nav_js_1 = require("./core/nav.js");
 const ingest_js_1 = require("./commands/ingest.js");
 const review_js_1 = require("./commands/review.js");
 const learn_js_1 = require("./commands/learn.js");
 const tui_js_1 = require("./commands/tui.js");
 const version_js_1 = require("./core/version.js");
 dotenv_1.default.config();
+(0, nav_js_1.initNavigationGuard)();
 const program = new commander_1.Command();
 program
     .name('lumio')

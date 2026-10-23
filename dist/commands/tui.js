@@ -6,7 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.runInteractiveTUI = runInteractiveTUI;
 const chalk_1 = __importDefault(require("chalk"));
 const boxen_1 = __importDefault(require("boxen"));
-const prompts_1 = require("@inquirer/prompts");
+const nav_js_1 = require("../core/nav.js");
 const ingest_js_1 = require("./ingest.js");
 const review_js_1 = require("./review.js");
 const guidelines_js_1 = require("./guidelines.js");
@@ -40,7 +40,7 @@ async function runInteractiveTUI() {
         const dbBadge = config.dbType === 'qdrant'
             ? chalk_1.default.bold.green('🌐 VPS Qdrant (knowlage.jagoankode.site)')
             : chalk_1.default.bold.blue('💻 Local LanceDB (~/.lumio/db)');
-        const mainChoice = await (0, prompts_1.select)({
+        const mainChoice = await (0, nav_js_1.select)({
             message: `Pilih aksi [DB Aktif: ${dbBadge}]:`,
             choices: [
                 {
@@ -120,8 +120,12 @@ async function runInteractiveTUI() {
     }
 }
 async function configureDatabaseUI(currentConfig) {
+    let selectedMode = currentConfig.dbType || 'qdrant';
+    let qdrantUrl = currentConfig.qdrantUrl || 'https://knowlage.jagoankode.site';
+    let qdrantApiKey = currentConfig.qdrantApiKey || '';
+    let qdrantCollection = currentConfig.qdrantCollection || 'guidelines';
     printHeader('Menu Utama > 💾 Database Storage Mode');
-    const selectedMode = await (0, prompts_1.select)({
+    const chosenMode = await (0, nav_js_1.select)({
         message: 'Pilih lokasi Vector Database untuk Knowledge Base tim:',
         choices: [
             {
@@ -140,13 +144,11 @@ async function configureDatabaseUI(currentConfig) {
             },
         ],
     });
-    if (selectedMode === 'back')
+    if (chosenMode === 'back')
         return;
-    let qdrantUrl = currentConfig.qdrantUrl || 'https://knowlage.jagoankode.site';
-    let qdrantApiKey = currentConfig.qdrantApiKey || '';
-    let qdrantCollection = currentConfig.qdrantCollection || 'guidelines';
+    selectedMode = chosenMode;
     if (selectedMode === 'qdrant') {
-        let inputUrl = await (0, prompts_1.input)({
+        let inputUrl = await (0, nav_js_1.input)({
             message: 'Qdrant VPS Server URL:',
             default: qdrantUrl,
             validate: (v) => (v.trim().length > 0 ? true : 'URL tidak boleh kosong'),
@@ -156,34 +158,105 @@ async function configureDatabaseUI(currentConfig) {
             inputUrl = `https://${inputUrl}`;
         }
         qdrantUrl = inputUrl;
-        qdrantCollection = await (0, prompts_1.input)({
+        qdrantCollection = await (0, nav_js_1.input)({
             message: 'Nama Collection di Qdrant:',
             default: qdrantCollection,
             validate: (v) => (v.trim().length > 0 ? true : 'Collection tidak boleh kosong'),
         });
-        qdrantApiKey = await (0, prompts_1.password)({
+        const enteredKey = await (0, nav_js_1.password)({
             message: 'Qdrant API Key (tekan Enter jika tanpa autentikasi):',
             mask: '*',
         });
-        if (!qdrantApiKey) {
-            qdrantApiKey = currentConfig.qdrantApiKey || '';
+        if (enteredKey && enteredKey !== 'back') {
+            qdrantApiKey = enteredKey;
         }
     }
-    const updatedConfig = {
-        ...currentConfig,
-        dbType: selectedMode,
-        qdrantUrl,
-        qdrantApiKey,
-        qdrantCollection,
-    };
-    await (0, config_js_1.saveConfig)(updatedConfig);
-    console.log(chalk_1.default.green(`\n✔ Database storage mode berhasil dialihkan ke: ${selectedMode === 'qdrant' ? '🌐 VPS Qdrant' : '💻 Local LanceDB'}\n`));
-    await pressEnterToContinue();
+    // REVIEW & EDIT CONFIRMATION LOOP UNTUK DATABASE
+    while (true) {
+        printHeader('Menu Utama > 💾 Database Storage Mode > Konfirmasi');
+        console.log(chalk_1.default.cyan('─── Ringkasan Konfigurasi Vector Database ───'));
+        console.log(`1. Mode Storage : ${selectedMode === 'qdrant' ? chalk_1.default.bold.green('🌐 Remote VPS Qdrant') : chalk_1.default.bold.blue('💻 Local LanceDB')}`);
+        if (selectedMode === 'qdrant') {
+            console.log(`2. Server URL   : ${chalk_1.default.yellow(qdrantUrl)}`);
+            console.log(`3. Collection   : ${chalk_1.default.cyan(qdrantCollection)}`);
+            console.log(`4. API Key      : ${qdrantApiKey ? chalk_1.default.green('Configured (***)') : chalk_1.default.gray('(Tanpa Key)')}`);
+        }
+        else {
+            console.log(`2. Path Disk    : ${chalk_1.default.yellow('~/.lumio/db')}`);
+        }
+        console.log(chalk_1.default.cyan('─────────────────────────────────────────────\n'));
+        const dbConfirm = await (0, nav_js_1.select)({
+            message: 'Apakah konfigurasi database sudah benar?',
+            choices: [
+                { name: '✅ Ya, Simpan & Terapkan', value: 'save' },
+                ...(selectedMode === 'qdrant' ? [{ name: '✏️  Koreksi URL / Collection / Key (Edit Typo)', value: 'edit' }] : []),
+                { name: '🔙 Batalkan & Kembali ke Menu Utama', value: 'cancel' },
+            ],
+        });
+        if (dbConfirm === 'cancel' || dbConfirm === 'back') {
+            console.log(chalk_1.default.gray('\nPengaturan database dibatalkan.\n'));
+            await pressEnterToContinue();
+            return;
+        }
+        if (dbConfirm === 'save') {
+            const updatedConfig = {
+                ...currentConfig,
+                dbType: selectedMode,
+                qdrantUrl,
+                qdrantApiKey,
+                qdrantCollection,
+            };
+            await (0, config_js_1.saveConfig)(updatedConfig);
+            console.log(chalk_1.default.green(`\n✔ Database storage mode berhasil dialihkan ke: ${selectedMode === 'qdrant' ? '🌐 VPS Qdrant' : '💻 Local LanceDB'}\n`));
+            await pressEnterToContinue();
+            return;
+        }
+        if (dbConfirm === 'edit') {
+            const field = await (0, nav_js_1.select)({
+                message: 'Pilih parameter Qdrant yang ingin dikoreksi:',
+                choices: [
+                    { name: `🌐 Server URL [${qdrantUrl}]`, value: 'url' },
+                    { name: `📂 Collection Name [${qdrantCollection}]`, value: 'collection' },
+                    { name: `🔑 API Key`, value: 'key' },
+                    { name: '🔙 Selesai Edit', value: 'back' },
+                ],
+            });
+            if (field === 'url') {
+                let inputUrl = await (0, nav_js_1.input)({
+                    message: 'Koreksi Qdrant URL:',
+                    default: qdrantUrl,
+                });
+                inputUrl = inputUrl.trim();
+                if (inputUrl && inputUrl !== 'back') {
+                    if (!inputUrl.startsWith('http://') && !inputUrl.startsWith('https://')) {
+                        inputUrl = `https://${inputUrl}`;
+                    }
+                    qdrantUrl = inputUrl;
+                }
+            }
+            else if (field === 'collection') {
+                const val = await (0, nav_js_1.input)({
+                    message: 'Koreksi Nama Collection:',
+                    default: qdrantCollection,
+                });
+                if (val && val !== 'back')
+                    qdrantCollection = val.trim();
+            }
+            else if (field === 'key') {
+                const val = await (0, nav_js_1.password)({
+                    message: 'Masukkan API Key baru (atau Enter untuk kosong):',
+                    mask: '*',
+                });
+                if (val !== 'back')
+                    qdrantApiKey = val.trim();
+            }
+        }
+    }
 }
 async function reviewWorkflowUI(config) {
     printHeader('Menu Utama > 🔍 Review Git');
     const currentBranch = await (0, git_js_1.getCurrentBranch)();
-    const diffType = await (0, prompts_1.select)({
+    const diffType = await (0, nav_js_1.select)({
         message: 'Pilih mode review git yang diinginkan:',
         choices: [
             {
@@ -210,7 +283,7 @@ async function reviewWorkflowUI(config) {
     let sourceBranch = undefined;
     let doFetch = false;
     if (diffType === 'pr_branches') {
-        const fetchChoice = await (0, prompts_1.select)({
+        const fetchChoice = await (0, nav_js_1.select)({
             message: 'Fetch branch remote terbaru dari origin (git fetch --all)?',
             choices: [
                 { name: '✅ Ya, fetch remote terbaru sekarang', value: 'yes' },
@@ -228,7 +301,7 @@ async function reviewWorkflowUI(config) {
             : allBranches.includes('main')
                 ? 'main'
                 : 'origin/master';
-        const rawTarget = await (0, prompts_1.input)({
+        const rawTarget = await (0, nav_js_1.input)({
             message: 'Target/Base Branch (tujuan PR, atau ketik "b" untuk batal):',
             default: defaultTarget,
         });
@@ -236,7 +309,7 @@ async function reviewWorkflowUI(config) {
             return;
         targetBranch = rawTarget.trim();
         const defaultSource = currentBranch !== 'HEAD' ? currentBranch : allBranches[0] || 'HEAD';
-        const rawSource = await (0, prompts_1.input)({
+        const rawSource = await (0, nav_js_1.input)({
             message: 'Source/Feature Branch (cabang yang mau direview, atau ketik "b" untuk batal):',
             default: defaultSource,
         });
@@ -245,7 +318,7 @@ async function reviewWorkflowUI(config) {
         sourceBranch = rawSource.trim();
     }
     const defaultDir = config.defaultReportDir || '.lumio-reviews';
-    const rawOutputDir = await (0, prompts_1.input)({
+    const rawOutputDir = await (0, nav_js_1.input)({
         message: 'Folder penyimpanan laporan Markdown review (atau "b" untuk batal):',
         default: defaultDir,
     });
@@ -253,7 +326,7 @@ async function reviewWorkflowUI(config) {
         return;
     const outputDir = rawOutputDir.trim();
     const defaultModel = config.defaultModel || 'ag/gemini-3.8-flash';
-    const model = await (0, prompts_1.select)({
+    const model = await (0, nav_js_1.select)({
         message: 'Pilih model LLM untuk review:',
         choices: [
             { name: `⚡ ${defaultModel} (Default Provider Model)`, value: defaultModel },
@@ -266,7 +339,7 @@ async function reviewWorkflowUI(config) {
         return;
     let selectedModel = model;
     if (model === 'custom') {
-        const rawCustom = await (0, prompts_1.input)({
+        const rawCustom = await (0, nav_js_1.input)({
             message: 'Nama model AI (atau "b" untuk batal):',
             default: defaultModel,
         });
@@ -289,7 +362,7 @@ async function reviewWorkflowUI(config) {
 async function learnWorkflowUI(config) {
     printHeader('Menu Utama > 🧠 Learn Code');
     console.log(chalk_1.default.gray('AI akan membedah source code lokal dari hulu ke hilir untuk mempelajari pola arsitektur.\n'));
-    const folderPath = await (0, prompts_1.input)({
+    const folderPath = await (0, nav_js_1.input)({
         message: 'Masukkan path folder/route lokal (atau ketik "b" untuk kembali):',
         default: './src',
     });
@@ -301,7 +374,7 @@ async function learnWorkflowUI(config) {
 }
 async function ingestWorkflowUI() {
     printHeader('Menu Utama > 📚 Ingest Knowledge');
-    const ingestType = await (0, prompts_1.select)({
+    const ingestType = await (0, nav_js_1.select)({
         message: 'Pilih metode memasukkan pengetahuan:',
         choices: [
             {
@@ -321,7 +394,7 @@ async function ingestWorkflowUI() {
     if (ingestType === 'back')
         return;
     if (ingestType === 'file') {
-        const docPath = await (0, prompts_1.input)({
+        const docPath = await (0, nav_js_1.input)({
             message: 'Masukkan path file/folder dokumen atau Web URL (atau ketik "b" untuk batal):',
             default: './docs',
         });
@@ -331,12 +404,12 @@ async function ingestWorkflowUI() {
         await (0, ingest_js_1.ingestCommand)(docPath.trim());
     }
     else if (ingestType === 'interactive') {
-        const title = await (0, prompts_1.input)({
+        const title = await (0, nav_js_1.input)({
             message: 'Judul aturan / pengetahuan (atau "b" untuk batal):',
         });
         if (!title.trim() || title.trim().toLowerCase() === 'b' || title.trim().toLowerCase() === 'back')
             return;
-        const content = await (0, prompts_1.input)({
+        const content = await (0, nav_js_1.input)({
             message: 'Isi aturan atau instruksi convention (atau "b" untuk batal):',
         });
         if (!content.trim() || content.trim().toLowerCase() === 'b' || content.trim().toLowerCase() === 'back')
@@ -348,7 +421,7 @@ async function ingestWorkflowUI() {
 }
 async function viewHistoryUI(defaultDir = '.lumio-reviews') {
     printHeader('Menu Utama > 📜 Review History');
-    const customDir = await (0, prompts_1.input)({
+    const customDir = await (0, nav_js_1.input)({
         message: 'Folder laporan markdown yang ingin dikelola (atau "b" untuk kembali):',
         default: defaultDir,
     });
@@ -374,14 +447,14 @@ async function viewHistoryUI(defaultDir = '.lumio-reviews') {
         }));
         choices.push({ name: chalk_1.default.red('🗑️  Hapus SEMUA report di folder ini'), value: 'clear_all' });
         choices.push({ name: '🔙 Kembali ke Menu Utama', value: 'back' });
-        const chosenAction = await (0, prompts_1.select)({
+        const chosenAction = await (0, nav_js_1.select)({
             message: `Pilih laporan review di ${chalk_1.default.yellow(resolved)}:`,
             choices,
         });
         if (chosenAction === 'back')
             return;
         if (chosenAction === 'clear_all') {
-            const sure = await (0, prompts_1.confirm)({
+            const sure = await (0, nav_js_1.confirm)({
                 message: `Yakin ingin menghapus seluruh (${refreshedReports.length}) file report di ${resolved}?`,
                 default: false,
             });
@@ -391,7 +464,7 @@ async function viewHistoryUI(defaultDir = '.lumio-reviews') {
             }
             return;
         }
-        const fileAction = await (0, prompts_1.select)({
+        const fileAction = await (0, nav_js_1.select)({
             message: `Aksi untuk ${chalk_1.default.cyan(chosenAction)}:`,
             choices: [
                 { name: '📖 Baca isi laporan (View Report)', value: 'view' },
@@ -407,7 +480,7 @@ async function viewHistoryUI(defaultDir = '.lumio-reviews') {
             await pressEnterToContinue();
         }
         else if (fileAction === 'delete') {
-            const confirmDelete = await (0, prompts_1.confirm)({
+            const confirmDelete = await (0, nav_js_1.confirm)({
                 message: `Hapus file ini secara permanen?`,
                 default: true,
             });
@@ -419,8 +492,15 @@ async function viewHistoryUI(defaultDir = '.lumio-reviews') {
     }
 }
 async function configureAIProviderUI(currentConfig) {
+    let provider = currentConfig.provider || '9router';
+    let baseUrl = currentConfig.baseUrl || (provider === '9router' ? 'https://api.9router.com/v1' : '');
+    let defaultModel = currentConfig.defaultModel || 'ag/gemini-3.8-flash';
+    let apiKey = currentConfig.apiKey || '';
+    let defaultReportDir = currentConfig.defaultReportDir || '.lumio-reviews';
+    let embeddingModel = currentConfig.embeddingModel || 'local';
+    // Wizard awal jika user baru pertama kali atau memilih konfigurasi
     printHeader('Menu Utama > 🤖 Configure AI Provider');
-    const provider = await (0, prompts_1.select)({
+    const selectedProvider = await (0, nav_js_1.select)({
         message: 'Pilih AI Provider:',
         choices: [
             { name: '🌐 9router (Multi-model Gateway / ag/*)', value: '9router' },
@@ -431,17 +511,15 @@ async function configureAIProviderUI(currentConfig) {
             { name: '🔙 Batalkan & Kembali ke Menu Utama', value: 'back' },
         ],
     });
-    if (provider === 'back')
+    if (selectedProvider === 'back')
         return;
-    let baseUrl = '';
-    let defaultModel = 'ag/gemini-3.8-flash';
-    let embeddingModel = 'local';
+    provider = selectedProvider;
     if (provider === '9router') {
-        baseUrl = await (0, prompts_1.input)({
+        baseUrl = await (0, nav_js_1.input)({
             message: '9router Base URL:',
             default: currentConfig.baseUrl || 'https://api.9router.com/v1',
         });
-        defaultModel = await (0, prompts_1.input)({
+        defaultModel = await (0, nav_js_1.input)({
             message: 'Default Model (contoh: ag/gemini-3.8-flash, cx/gpt-6-astra):',
             default: currentConfig.defaultModel || 'ag/gemini-3.8-flash',
         });
@@ -449,7 +527,7 @@ async function configureAIProviderUI(currentConfig) {
     }
     else if (provider === 'openai') {
         baseUrl = '';
-        defaultModel = await (0, prompts_1.input)({
+        defaultModel = await (0, nav_js_1.input)({
             message: 'Default Model:',
             default: currentConfig.defaultModel || 'gpt-4o',
         });
@@ -457,60 +535,138 @@ async function configureAIProviderUI(currentConfig) {
     }
     else if (provider === 'openrouter') {
         baseUrl = 'https://openrouter.ai/api/v1';
-        defaultModel = await (0, prompts_1.input)({
+        defaultModel = await (0, nav_js_1.input)({
             message: 'Default Model (contoh: anthropic/claude-3.5-sonnet, openai/gpt-4o):',
             default: currentConfig.defaultModel || 'openai/gpt-4o',
         });
         embeddingModel = 'local';
     }
     else if (provider === 'ollama') {
-        baseUrl = await (0, prompts_1.input)({
+        baseUrl = await (0, nav_js_1.input)({
             message: 'Ollama Base URL:',
             default: currentConfig.baseUrl || 'http://localhost:11434/v1',
         });
-        defaultModel = await (0, prompts_1.input)({
+        defaultModel = await (0, nav_js_1.input)({
             message: 'Ollama Model:',
             default: currentConfig.defaultModel || 'qwen2.5-coder',
         });
         embeddingModel = 'local';
     }
     else if (provider === 'custom') {
-        baseUrl = await (0, prompts_1.input)({
+        baseUrl = await (0, nav_js_1.input)({
             message: 'Custom Base URL:',
             default: currentConfig.baseUrl || 'https://api.example.com/v1',
         });
-        defaultModel = await (0, prompts_1.input)({
+        defaultModel = await (0, nav_js_1.input)({
             message: 'Default Model:',
             default: currentConfig.defaultModel || 'gpt-4o',
         });
         embeddingModel = 'local';
     }
-    let apiKey = '';
     if (provider !== 'ollama') {
-        apiKey = await (0, prompts_1.password)({
+        const enteredKey = await (0, nav_js_1.password)({
             message: `Masukkan API Key untuk ${provider} (kosongkan jika tidak ingin mengubah):`,
             mask: '*',
         });
-        if (!apiKey) {
-            apiKey = currentConfig.apiKey;
+        if (enteredKey && enteredKey !== 'back') {
+            apiKey = enteredKey;
         }
     }
-    const defaultReportDir = await (0, prompts_1.input)({
+    const enteredDir = await (0, nav_js_1.input)({
         message: 'Default folder simpan laporan review markdown:',
         default: currentConfig.defaultReportDir || '.lumio-reviews',
     });
-    const newConfig = {
-        ...currentConfig,
-        provider,
-        apiKey,
-        baseUrl,
-        defaultModel,
-        embeddingModel,
-        defaultReportDir,
-    };
-    await (0, config_js_1.saveConfig)(newConfig);
-    console.log(chalk_1.default.green(`\n✔ Konfigurasi berhasil disimpan ke ~/.lumio/config.json!\n`));
-    await pressEnterToContinue();
+    if (enteredDir && enteredDir !== 'back') {
+        defaultReportDir = enteredDir;
+    }
+    // REVIEW & EDIT CONFIRMATION LOOP (Anti-Typo Safeguard)
+    while (true) {
+        printHeader('Menu Utama > 🤖 Configure AI Provider > Konfirmasi');
+        const maskedKey = apiKey ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : chalk_1.default.gray('(Tidak ada / kosong)');
+        console.log(chalk_1.default.cyan('─── Ringkasan Konfigurasi AI (Cek Typo Sebelum Simpan) ───'));
+        console.log(`1. Provider      : ${chalk_1.default.bold.yellow(provider)}`);
+        console.log(`2. Base URL      : ${chalk_1.default.white(baseUrl || chalk_1.default.gray('(Default SDK)'))}`);
+        console.log(`3. Default Model : ${chalk_1.default.bold.green(defaultModel)}`);
+        console.log(`4. API Key       : ${chalk_1.default.white(maskedKey)}`);
+        console.log(`5. Report Dir    : ${chalk_1.default.white(defaultReportDir)}`);
+        console.log(chalk_1.default.cyan('──────────────────────────────────────────────────────────\n'));
+        const reviewAction = await (0, nav_js_1.select)({
+            message: 'Apakah konfigurasi di atas sudah sesuai?',
+            choices: [
+                { name: '✅ Ya, Simpan & Terapkan Konfigurasi', value: 'save' },
+                { name: '✏️  Edit Field Tertentu (Koreksi Typo)', value: 'edit_field' },
+                { name: '🔄 Setup Ulang dari Awal', value: 'restart' },
+                { name: '🔙 Batalkan & Kembali ke Menu Utama (Tanpa Simpan)', value: 'cancel' },
+            ],
+        });
+        if (reviewAction === 'cancel' || reviewAction === 'back') {
+            console.log(chalk_1.default.gray('\nPerubahan konfigurasi AI dibatalkan.\n'));
+            await pressEnterToContinue();
+            return;
+        }
+        if (reviewAction === 'save') {
+            const newConfig = {
+                ...currentConfig,
+                provider,
+                apiKey,
+                baseUrl,
+                defaultModel,
+                embeddingModel,
+                defaultReportDir,
+            };
+            await (0, config_js_1.saveConfig)(newConfig);
+            console.log(chalk_1.default.green(`\n✔ Konfigurasi berhasil disimpan ke ~/.lumio/config.json!\n`));
+            await pressEnterToContinue();
+            return;
+        }
+        if (reviewAction === 'restart') {
+            return await configureAIProviderUI(currentConfig);
+        }
+        if (reviewAction === 'edit_field') {
+            const fieldToEdit = await (0, nav_js_1.select)({
+                message: 'Pilih data yang ingin diperbaiki:',
+                choices: [
+                    { name: `🌐 Base URL [${baseUrl}]`, value: 'baseUrl' },
+                    { name: `⚡ Default Model [${defaultModel}]`, value: 'model' },
+                    { name: `🔑 API Key`, value: 'apiKey' },
+                    { name: `📁 Report Dir [${defaultReportDir}]`, value: 'reportDir' },
+                    { name: '🔙 Selesai Edit (Kembali ke Ringkasan)', value: 'back' },
+                ],
+            });
+            if (fieldToEdit === 'baseUrl') {
+                const val = await (0, nav_js_1.input)({
+                    message: 'Koreksi Base URL:',
+                    default: baseUrl,
+                });
+                if (val && val !== 'back')
+                    baseUrl = val.trim();
+            }
+            else if (fieldToEdit === 'model') {
+                const val = await (0, nav_js_1.input)({
+                    message: 'Koreksi Default Model AI:',
+                    default: defaultModel,
+                });
+                if (val && val !== 'back')
+                    defaultModel = val.trim();
+            }
+            else if (fieldToEdit === 'apiKey') {
+                const val = await (0, nav_js_1.password)({
+                    message: 'Masukkan API Key baru:',
+                    mask: '*',
+                });
+                if (val && val !== 'back')
+                    apiKey = val.trim();
+            }
+            else if (fieldToEdit === 'reportDir') {
+                const val = await (0, nav_js_1.input)({
+                    message: 'Koreksi Report Dir:',
+                    default: defaultReportDir,
+                });
+                if (val && val !== 'back')
+                    defaultReportDir = val.trim();
+            }
+        }
+    }
 }
 async function showStatusUI(inRepo, config) {
     printHeader('Menu Utama > ⚙️ System Status');
@@ -537,7 +693,7 @@ async function showStatusUI(inRepo, config) {
     await pressEnterToContinue();
 }
 async function pressEnterToContinue() {
-    await (0, prompts_1.input)({
+    await (0, nav_js_1.input)({
         message: chalk_1.default.gray('Tekan [Enter] untuk kembali ke Menu Utama...'),
     });
 }
