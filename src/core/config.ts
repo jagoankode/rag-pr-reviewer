@@ -10,6 +10,7 @@ export interface AppConfig {
   apiKey: string;
   baseUrl?: string;
   defaultModel: string;
+  savedModels?: string[];
   embeddingModel?: string;
   defaultReportDir?: string;
   // Konfigurasi Database (Local LanceDB vs Remote Qdrant VPS)
@@ -31,6 +32,7 @@ const DEFAULT_CONFIG: AppConfig = {
   apiKey: '',
   baseUrl: '',
   defaultModel: 'gpt-4o',
+  savedModels: ['ag/gemini-3.8-flash', 'ag/claude-sonnet-4-6', 'cx/gpt-6-astra'],
   embeddingModel: 'text-embedding-3-small',
   defaultReportDir: '.lumio-reviews',
   dbType: 'local',
@@ -58,7 +60,13 @@ export async function loadConfig(): Promise<AppConfig> {
   try {
     const data = await fs.readFile(configFile, 'utf-8');
     const parsed = JSON.parse(data);
-    return { ...DEFAULT_CONFIG, ...parsed };
+    const merged: AppConfig = { ...DEFAULT_CONFIG, ...parsed };
+    if (!merged.savedModels || !Array.isArray(merged.savedModels) || merged.savedModels.length === 0) {
+      merged.savedModels = Array.from(new Set([merged.defaultModel, ...(DEFAULT_CONFIG.savedModels || [])]));
+    } else if (!merged.savedModels.includes(merged.defaultModel)) {
+      merged.savedModels.unshift(merged.defaultModel);
+    }
+    return merged;
   } catch {
     const envApiKey = process.env.OPENAI_API_KEY || '';
     const envBaseUrl = process.env.OPENAI_BASE_URL || '';

@@ -78,6 +78,10 @@ export async function runInteractiveTUI() {
           value: 'history',
         },
         {
+          name: `⚡ Ganti Model Cepat (${chalk.green(config.defaultModel)})`,
+          value: 'quick_switch_model',
+        },
+        {
           name: `🤖 Configure AI Provider (${chalk.cyan(config.provider)})`,
           value: 'config_ai',
         },
@@ -111,6 +115,8 @@ export async function runInteractiveTUI() {
       await configureDatabaseUI(config);
     } else if (mainChoice === 'history') {
       await viewHistoryUI(config.defaultReportDir || '.lumio-reviews');
+    } else if (mainChoice === 'quick_switch_model') {
+      await quickSwitchModelUI(config);
     } else if (mainChoice === 'config_ai') {
       await configureAIProviderUI(config);
     } else if (mainChoice === 'status') {
@@ -341,12 +347,20 @@ async function reviewWorkflowUI(config: AppConfig) {
   const outputDir = rawOutputDir.trim();
 
   const defaultModel = config.defaultModel || 'ag/gemini-3.8-flash';
+  const savedModels = config.savedModels && config.savedModels.length > 0
+    ? Array.from(new Set([defaultModel, ...config.savedModels]))
+    : [defaultModel, 'ag/claude-sonnet-4-6', 'cx/gpt-6-astra'];
+
+  const modelChoices = savedModels.map((m) => ({
+    name: m === defaultModel ? `⚡ ${m} (Default Aktif)` : `🤖 ${m}`,
+    value: m,
+  }));
+
   const model = await select<string>({
     message: 'Pilih model LLM untuk review:',
     choices: [
-      { name: `⚡ ${defaultModel} (Default Provider Model)`, value: defaultModel },
-      { name: '🧠 gpt-4o-mini', value: 'gpt-4o-mini' },
-      { name: '🧪 Custom Model (ketik manual)', value: 'custom' },
+      ...modelChoices,
+      { name: '➕ Ketik model lain sekali pakai (Custom)', value: 'custom' },
       { name: '🔙 Batalkan & Kembali', value: 'back' },
     ],
   });
@@ -521,6 +535,114 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
       if (confirmDelete) {
         await deleteReportFile(chosenAction);
         console.log(chalk.green(`\n✔ File report berhasil dihapus.\n`));
+      }
+    }
+  }
+}
+
+async function quickSwitchModelUI(currentConfig: AppConfig) {
+  let activeModel = currentConfig.defaultModel || 'ag/gemini-3.8-flash';
+  let savedModels = currentConfig.savedModels && currentConfig.savedModels.length > 0
+    ? [...currentConfig.savedModels]
+    : [activeModel, 'ag/claude-sonnet-4-6', 'cx/gpt-6-astra'];
+
+  if (!savedModels.includes(activeModel)) {
+    savedModels.unshift(activeModel);
+  }
+
+  while (true) {
+    printHeader('Menu Utama > ⚡ Ganti Model Cepat');
+
+    console.log(chalk.cyan(`Provider Aktif : ${chalk.bold.yellow(currentConfig.provider)}`));
+    console.log(chalk.cyan(`Model Aktif    : ${chalk.bold.green(activeModel)}\n`));
+
+    const choices = [
+      ...savedModels.map((m) => ({
+        name: m === activeModel ? `🟢 ${m} (Sedang Aktif)` : `⚪ ${m}`,
+        value: `select:${m}`,
+      })),
+      { name: '➕ Tambah Model Baru ke Daftar', value: 'add' },
+      { name: '🗑️  Hapus Model dari Daftar', value: 'delete' },
+      { name: '🔙 Kembali ke Menu Utama', value: 'back' },
+    ];
+
+    const action = await select({
+      message: 'Pilih model yang ingin diaktifkan atau kelola daftar model:',
+      choices,
+    });
+
+    if (action === 'back') {
+      return;
+    }
+
+    if (action.startsWith('select:')) {
+      const chosen = action.replace('select:', '');
+      activeModel = chosen;
+      const updatedConfig: AppConfig = {
+        ...currentConfig,
+        defaultModel: activeModel,
+        savedModels,
+      };
+      await saveConfig(updatedConfig);
+      console.log(chalk.green(`\n✔ Model aktif berhasil diganti ke: ${chalk.bold(activeModel)}\n`));
+      await pressEnterToContinue();
+      return;
+    }
+
+    if (action === 'add') {
+      const newModelName = await input({
+        message: 'Masukkan nama model baru (contoh: ag/claude-sonnet-4-6, deepseek/deepseek-r1):',
+        validate: (v) => (v.trim().length > 0 ? true : 'Nama model tidak boleh kosong'),
+      });
+
+      if (newModelName && newModelName !== 'back') {
+        const trimmed = newModelName.trim();
+        if (!savedModels.includes(trimmed)) {
+          savedModels.push(trimmed);
+        }
+        activeModel = trimmed;
+        const updatedConfig: AppConfig = {
+          ...currentConfig,
+          defaultModel: activeModel,
+          savedModels,
+        };
+        await saveConfig(updatedConfig);
+        console.log(chalk.green(`\n✔ Model ${chalk.bold(trimmed)} ditambahkan dan langsung dijadikan model aktif!\n`));
+        await pressEnterToContinue();
+      }
+    }
+
+    if (action === 'delete') {
+      if (savedModels.length <= 1) {
+        console.log(chalk.yellow('\n⚠️  Tidak bisa menghapus model terakhir dari daftar.\n'));
+        await pressEnterToContinue();
+        continue;
+      }
+
+      const modelToDelete = await select({
+        message: 'Pilih model yang ingin dihapus dari daftar:',
+        choices: [
+          ...savedModels.map((m) => ({
+            name: m === activeModel ? `⚠️  ${m} (Sedang Aktif)` : m,
+            value: m,
+          })),
+          { name: '🔙 Batalkan', value: 'back' },
+        ],
+      });
+
+      if (modelToDelete !== 'back') {
+        savedModels = savedModels.filter((m) => m !== modelToDelete);
+        if (activeModel === modelToDelete) {
+          activeModel = savedModels[0];
+        }
+        const updatedConfig: AppConfig = {
+          ...currentConfig,
+          defaultModel: activeModel,
+          savedModels,
+        };
+        await saveConfig(updatedConfig);
+        console.log(chalk.green(`\n✔ Model ${chalk.bold(modelToDelete)} berhasil dihapus dari daftar.\n`));
+        await pressEnterToContinue();
       }
     }
   }
