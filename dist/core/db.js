@@ -296,6 +296,7 @@ async function searchRelevantGuidelines(query, limit = 5) {
             const searchResults = await client.query(collection, {
                 query: queryVector,
                 limit,
+                score_threshold: 0.05,
                 with_payload: true,
             });
             return searchResults.points.map((res) => ({

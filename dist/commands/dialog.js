@@ -43,31 +43,74 @@ async function runInteractiveKnowledgeDialog() {
         }
         const spinner = (0, ora_1.default)(chalk_1.default.blue('Mengecek database pengetahuan RAG...')).start();
         try {
-            // 1. Ambil aturan yang paling relevan dari LanceDB
             const relevantChunks = await (0, db_js_1.searchRelevantGuidelines)(cleaned, 4);
+            if (relevantChunks.length === 0) {
+                spinner.stop();
+                console.log(`\n${chalk_1.default.bold.cyan('RAG  :')} ${chalk_1.default.white('Saya belum mempunyai pengetahuan itu.')}\n`);
+                chatHistory.push({ role: 'user', text: cleaned });
+                chatHistory.push({ role: 'assistant', text: 'Saya belum mempunyai pengetahuan itu.' });
+                const quickAction = await (0, nav_js_1.select)({
+                    message: 'Langkah selanjutnya:',
+                    choices: [
+                        { name: '💬 Lanjut mengobrol / bertanya', value: 'continue' },
+                        { name: '💾 Ajarkan & Simpan pernyataan ini sebagai Aturan Baru ke RAG', value: 'save' },
+                        { name: '🔙 Selesai & Kembali ke Menu Utama', value: 'back' },
+                    ],
+                });
+                if (quickAction === 'back') {
+                    break;
+                }
+                else if (quickAction === 'save') {
+                    const ruleTitle = await (0, nav_js_1.input)({
+                        message: 'Beri judul aturan baru ini:',
+                        default: cleaned.slice(0, 50),
+                        validate: (v) => (v.trim().length > 0 ? true : 'Judul tidak boleh kosong'),
+                    });
+                    const ruleContent = await (0, nav_js_1.input)({
+                        message: 'Isi spesifikasi aturan:',
+                        default: cleaned,
+                        validate: (v) => (v.trim().length > 0 ? true : 'Isi aturan tidak boleh kosong'),
+                    });
+                    const saveSpinner = (0, ora_1.default)(chalk_1.default.blue('Menyimpan aturan baru ke RAG...')).start();
+                    const chunk = {
+                        id: `conv_${Date.now()}`,
+                        source: 'interactive_dialog',
+                        title: ruleTitle.trim(),
+                        content: ruleContent.trim(),
+                    };
+                    const result = await (0, db_js_1.insertChunks)([chunk]);
+                    if (result.insertedCount > 0) {
+                        saveSpinner.succeed(chalk_1.default.green(`Aturan "${ruleTitle}" berhasil disimpan ke RAG!`));
+                    }
+                    else {
+                        saveSpinner.info(chalk_1.default.yellow(`Aturan ini sudah ada sebelumnya (ditolak duplikat).`));
+                    }
+                    console.log('');
+                }
+                continue;
+            }
             // Ambil seluruh daftar judul aturan untuk referensi ringkas AI jika ditanya hal umum
             const allGuidelines = await (0, db_js_1.listAllIndexedGuidelines)();
             const allTitlesSummary = allGuidelines.map((g, i) => `${i + 1}. ${g.title}`).join('\n');
-            const knowledgeContext = relevantChunks.length > 0
-                ? relevantChunks.map((c) => `[Judul: ${c.title} | Source: ${c.source}]\n${c.content}`).join('\n\n---\n\n')
-                : 'KOSONG / TIDAK DITEMUKAN';
+            const knowledgeContext = relevantChunks
+                .map((c) => `[Judul: ${c.title} | Source: ${c.source}]\n${c.content}`)
+                .join('\n\n---\n\n');
             const systemPrompt = `You are the strict, honest Guardian of Internal Coding Conventions.
 You are in a direct 2-way conversation with a software developer.
 
 CRITICAL DIRECTIVES:
-1. STRICT GROUNDING: You ONLY answer based on the STORED CONVENTIONS provided below.
-2. If the user asks whether you know something, or asks about a convention that is NOT in the stored conventions:
-   - YOU MUST EXPLICITLY STATE: "Maaf, saya belum memiliki pengetahuan atau aturan mengenai [topik] di database RAG saya."
-   - DO NOT make up conventions. DO NOT guess. DO NOT give general internet knowledge as if it's the team's internal rule.
-3. If the user tells you a new rule or convention (e.g. "Mulai sekarang semua interface harus diawali huruf I" or "Aturan baru: gunakan Zod untuk validasi"):
-   - Acknowledge it clearly: "Baik, saya catat aturan baru ini: [...]"
-   - Confirm what the rule states and say it is ready to be saved.
+1. STRICT ZERO-ASSUMPTION GROUNDING: You ONLY answer based on the STORED CONVENTIONS provided below.
+2. If the user asks about any topic, rule, syntax, or convention that is NOT explicitly found in the STORED CONVENTIONS below:
+   - YOU MUST ANSWER EXACTLY: "Saya belum mempunyai pengetahuan itu."
+   - DO NOT make up conventions. DO NOT guess. DO NOT give general internet/community knowledge.
+3. If the user asks whether you have a rule about something (e.g. "Apakah kamu punya aturan tentang type?"):
+   - Answer directly based on the stored conventions, quote or explain the relevant rule, and reference the rule title.
 4. Keep answers concise, natural, direct, and polite in Indonesian.
 
-=== DAFTAR SEMUA JUDUL ATURAN YANG SUDAH TERDAFTAR DI RAG ===
+=== DAFTAR ATURAN YANG SUDAH TERDAFTAR DI RAG ===
 ${allTitlesSummary || '(Belum ada aturan yang tersimpan)'}
 
-=== ISI DETAIL ATURAN YANG RELEVAN DENGAN PERTANYAAN INI ===
+=== ISI DETAIL ATURAN YANG RELEVAN DARI DATABASE (TRUTH) ===
 ${knowledgeContext}
 ============================================================
 `;
