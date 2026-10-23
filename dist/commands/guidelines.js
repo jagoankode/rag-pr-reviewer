@@ -7,7 +7,6 @@ exports.inspectGuidelinesCommand = inspectGuidelinesCommand;
 const chalk_1 = __importDefault(require("chalk"));
 const prompts_1 = require("@inquirer/prompts");
 const db_js_1 = require("../core/db.js");
-const marked_1 = require("marked");
 async function inspectGuidelinesCommand() {
     const guidelines = await (0, db_js_1.listAllIndexedGuidelines)();
     if (guidelines.length === 0) {
@@ -33,8 +32,9 @@ async function inspectGuidelinesCommand() {
             console.log(chalk_1.default.bold.cyan('\n═════════════════════ DETAIL ATURAN CONVENTION ═════════════════════'));
             console.log(chalk_1.default.yellow(`Judul : ${selected.title}`));
             console.log(chalk_1.default.gray(`File  : ${selected.source}\n`));
-            console.log((0, marked_1.marked)(selected.content));
-            console.log(chalk_1.default.bold.cyan('════════════════════════════════════════════════════════════════════\n'));
+            // Tampilkan teks markdown murni asli dari file, jangan dikonversi ke HTML oleh marked()
+            console.log(chalk_1.default.white(selected.content));
+            console.log(chalk_1.default.bold.cyan('\n════════════════════════════════════════════════════════════════════\n'));
         }
     }
 }

@@ -13,7 +13,6 @@ const guidelines_js_1 = require("./guidelines.js");
 const git_js_1 = require("../core/git.js");
 const config_js_1 = require("../core/config.js");
 const history_js_1 = require("../core/history.js");
-const marked_1 = require("marked");
 const fs_1 = require("fs");
 async function runInteractiveTUI() {
     console.clear();
@@ -134,7 +133,6 @@ async function runInteractiveTUI() {
                     validate: (val) => (val.trim().length > 0 ? true : 'Source branch tidak boleh kosong'),
                 });
             }
-            // Konfigurasi output directory penyimpanan report markdown
             const defaultDir = config.defaultReportDir || '.rag-reviews';
             const outputDir = await (0, prompts_1.input)({
                 message: 'Folder penyimpanan laporan Markdown review:',
@@ -239,8 +237,8 @@ async function viewHistoryUI(defaultDir = '.rag-reviews') {
     if (fileAction === 'view') {
         const content = await fs_1.promises.readFile(chosenAction, 'utf-8');
         console.log(chalk_1.default.bold.cyan('\n═════════════════════ SAVED REVIEW REPORT ═════════════════════\n'));
-        console.log((0, marked_1.marked)(content));
-        console.log(chalk_1.default.bold.cyan('═══════════════════════════════════════════════════════════════\n'));
+        console.log(chalk_1.default.white(content));
+        console.log(chalk_1.default.bold.cyan('\n═══════════════════════════════════════════════════════════════\n'));
     }
     else if (fileAction === 'delete') {
         const confirmDelete = await (0, prompts_1.confirm)({

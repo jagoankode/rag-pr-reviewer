@@ -7,7 +7,6 @@ import { inspectGuidelinesCommand } from './guidelines.js';
 import { isGitRepo, getAvailableBranches, getCurrentBranch } from '../core/git.js';
 import { loadConfig, saveConfig, AppConfig } from '../core/config.js';
 import { listSavedReports, resolveReportDir, deleteReportFile, clearAllReports } from '../core/history.js';
-import { marked } from 'marked';
 import { promises as fs } from 'fs';
 
 export async function runInteractiveTUI() {
@@ -146,7 +145,6 @@ export async function runInteractiveTUI() {
         });
       }
 
-      // Konfigurasi output directory penyimpanan report markdown
       const defaultDir = config.defaultReportDir || '.rag-reviews';
       const outputDir = await input({
         message: 'Folder penyimpanan laporan Markdown review:',
@@ -264,8 +262,8 @@ async function viewHistoryUI(defaultDir: string = '.rag-reviews') {
   if (fileAction === 'view') {
     const content = await fs.readFile(chosenAction, 'utf-8');
     console.log(chalk.bold.cyan('\n═════════════════════ SAVED REVIEW REPORT ═════════════════════\n'));
-    console.log(marked(content));
-    console.log(chalk.bold.cyan('═══════════════════════════════════════════════════════════════\n'));
+    console.log(chalk.white(content));
+    console.log(chalk.bold.cyan('\n═══════════════════════════════════════════════════════════════\n'));
   } else if (fileAction === 'delete') {
     const confirmDelete = await confirm({
       message: `Hapus file ${chosenAction}?`,

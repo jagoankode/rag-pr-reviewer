@@ -1,7 +1,6 @@
 import chalk from 'chalk';
 import { select } from '@inquirer/prompts';
 import { listAllIndexedGuidelines } from '../core/db.js';
-import { marked } from 'marked';
 
 export async function inspectGuidelinesCommand(): Promise<void> {
   const guidelines = await listAllIndexedGuidelines();
@@ -34,8 +33,9 @@ export async function inspectGuidelinesCommand(): Promise<void> {
       console.log(chalk.bold.cyan('\n═════════════════════ DETAIL ATURAN CONVENTION ═════════════════════'));
       console.log(chalk.yellow(`Judul : ${selected.title}`));
       console.log(chalk.gray(`File  : ${selected.source}\n`));
-      console.log(marked(selected.content));
-      console.log(chalk.bold.cyan('════════════════════════════════════════════════════════════════════\n'));
+      // Tampilkan teks markdown murni asli dari file, jangan dikonversi ke HTML oleh marked()
+      console.log(chalk.white(selected.content));
+      console.log(chalk.bold.cyan('\n════════════════════════════════════════════════════════════════════\n'));
     }
   }
 }
