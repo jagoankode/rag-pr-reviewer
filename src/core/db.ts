@@ -8,6 +8,8 @@ import { DocChunk } from './chunker.js';
 import { getActiveAIProvider, loadConfig, getConfigDir } from './config.js';
 import { createTfIdfIndex } from './local-embedder.js';
 import { getNormHash } from './dedup.js';
+import { syncGuidelinesRules, readCachedRules } from './updater.js';
+import { rankGuidelinesByRelevance } from './matcher.js';
 
 const TABLE_NAME = 'guidelines';
 
@@ -119,7 +121,7 @@ export async function listAllIndexedGuidelines(): Promise<{ id: string; source: 
   if (config.dbType === 'qdrant') {
     try {
       const { client, collection } = await getQdrantClient();
-      const points = await client.scroll(collection, { limit: 100, with_payload: true });
+      const points = await client.scroll(collection, { limit: 500, with_payload: true });
       return points.points.map((p) => {
         const payload = p.payload as any;
         return {
@@ -201,31 +203,30 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
       points,
     });
 
+    // Pemicu update cache lokal setelah admin ingest
+    await syncGuidelinesRules({ force: true, quiet: true });
+
     return {
-      insertedCount: points.length,
+      insertedCount: uniqueChunks.length,
       duplicateCount: skippedTitles.length,
       skippedTitles,
     };
   }
 
+  // Local LanceDB fallback
   const db = await getDb();
   const tableNames = await db.tableNames();
+
   let existingRecords: any[] = [];
-  let tableHasContentHash = false;
+  let table: lancedb.Table | null = null;
 
   if (tableNames.includes(TABLE_NAME)) {
-    const table = await db.openTable(TABLE_NAME);
+    table = await db.openTable(TABLE_NAME);
     existingRecords = await table.query().toArray();
-    try {
-      const tblSchema = await table.schema();
-      tableHasContentHash = tblSchema.fields.some((f: any) => f.name === 'contentHash');
-    } catch {
-      tableHasContentHash = false;
-    }
   }
 
   const existingHashes = new Set(
-    existingRecords.map((r: any) => r.contentHash || getNormHash(r.content))
+    existingRecords.map((r: any) => r.contentHash || getNormHash(r.content || ''))
   );
 
   const uniqueChunks: DocChunk[] = [];
@@ -252,41 +253,35 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
   const texts = uniqueChunks.map((c) => `${c.title}\n${c.content}`);
   const vectors = await generateVectors(texts);
 
-  const newRecords: GuidelineRecord[] = uniqueChunks.map((chunk, i) => {
-    const rec: GuidelineRecord = {
-      id: chunk.id,
-      source: chunk.source,
-      title: chunk.title,
-      content: chunk.content,
-      vector: vectors[i],
-    };
-    if (!tableNames.includes(TABLE_NAME) || tableHasContentHash) {
-      rec.contentHash = getNormHash(chunk.content);
-    }
-    return rec;
-  });
+  const records: GuidelineRecord[] = uniqueChunks.map((chunk, i) => ({
+    id: chunk.id,
+    source: chunk.source,
+    title: chunk.title,
+    content: chunk.content,
+    contentHash: getNormHash(chunk.content),
+    vector: vectors[i],
+  }));
 
-  if (tableNames.includes(TABLE_NAME)) {
-    const table = await db.openTable(TABLE_NAME);
-    await table.add(newRecords);
+  if (!table) {
+    table = await db.createTable(TABLE_NAME, records);
   } else {
-    await db.createTable(TABLE_NAME, newRecords);
+    await table.add(records);
   }
 
   return {
-    insertedCount: newRecords.length,
+    insertedCount: uniqueChunks.length,
     duplicateCount: skippedTitles.length,
     skippedTitles,
   };
 }
 
-export async function ingestDirectKnowledge(
+export async function insertGuideline(
   title: string,
   content: string,
-  source: string = 'interactive_conversation'
+  source: string = 'manual'
 ): Promise<InsertResult> {
   const chunk: DocChunk = {
-    id: `direct_${Date.now()}`,
+    id: String(Math.floor(Math.random() * 1000000000)),
     source,
     title,
     content,
@@ -294,6 +289,10 @@ export async function ingestDirectKnowledge(
   return await insertChunks([chunk]);
 }
 
+/**
+ * Cari guideline relevan.
+ * Mode Qdrant otomatis memanfaatkan Auto-Synced Rules Cache & Lexical Matching (0 external embedding call).
+ */
 export async function searchRelevantGuidelines(
   query: string,
   limit: number = 5
@@ -302,53 +301,29 @@ export async function searchRelevantGuidelines(
 
   if (config.dbType === 'qdrant') {
     try {
-      const { client, collection } = await getQdrantClient();
-      const points = await client.scroll(collection, { limit: 100, with_payload: true });
-      if (points.points.length === 0) return [];
-
-      const corpus = points.points.map((p: any) => `${p.payload?.title}\n${p.payload?.content}`);
-      let queryVector: number[];
-
-      const isLocalEmb = config.embeddingModel === 'local' || (!config.embeddingApiKey && config.provider === '9router');
-
-      if (isLocalEmb) {
-        const vectorizer = createTfIdfIndex(corpus);
-        queryVector = vectorizer(query.slice(0, 4000));
+      // Ambil rules dari cache lokal / auto-sync patch terbaru
+      let allRules: DocChunk[] = [];
+      const cached = readCachedRules();
+      if (cached && cached.rules && cached.rules.length > 0) {
+        allRules = cached.rules;
       } else {
-        const { embeddingClient } = await getActiveAIProvider();
-        const embModel = config.embeddingModel || 'text-embedding-3-small';
-        try {
-          const { embedding } = await embed({
-            model: embeddingClient.embedding(embModel),
-            value: query.slice(0, 4000),
-          });
-          queryVector = embedding;
-        } catch (err: any) {
-          throw new Error(
-            `Gagal memanggil API embedding query (${embModel}): ${err.message || String(err)}`
-          );
-        }
+        allRules = await syncGuidelinesRules({ quiet: true });
       }
 
-      const searchResults = await client.query(collection, {
-        query: queryVector,
-        limit,
-        score_threshold: 0.05,
-        with_payload: true,
-      });
+      if (allRules.length === 0) {
+        return [];
+      }
 
-      return searchResults.points.map((res: any) => ({
-        id: String(res.id),
-        source: res.payload?.source || 'remote_vps',
-        title: res.payload?.title || 'Untitled',
-        content: res.payload?.content || '',
-      }));
+      // Ranking relevansi kode/scaffold terhadap pasal-pasal
+      return rankGuidelinesByRelevance(query, allRules, limit);
     } catch (err: any) {
-      console.error(chalk.red(`\n[Vector DB Search Error]: ${err.message || String(err)}`));
+      const detail = err.data?.status?.error || err.message || String(err);
+      console.error(chalk.red(`\n[Guidelines Rules Error]: ${detail}`));
       return [];
     }
   }
 
+  // Local LanceDB Mode
   const db = await getDb();
   const tableNames = await db.tableNames();
 

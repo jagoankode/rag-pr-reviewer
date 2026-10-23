@@ -15,6 +15,7 @@ const review_js_1 = require("./commands/review.js");
 const learn_js_1 = require("./commands/learn.js");
 const tui_js_1 = require("./commands/tui.js");
 const version_js_1 = require("./core/version.js");
+const updater_js_1 = require("./core/updater.js");
 dotenv_1.default.config();
 (0, nav_js_1.initNavigationGuard)();
 const program = new commander_1.Command();
@@ -23,19 +24,43 @@ program
     .description(chalk_1.default.cyan('✨ Lumio — AI-Powered PR Reviewer & Centralized Knowledge Engine'))
     .version((0, version_js_1.getAppVersion)(), '-v, --version', 'Tampilkan versi Lumio yang terinstall')
     .action(async () => {
+    // Tier 1: Check App Upgrade saat lumio dipanggil
+    await (0, updater_js_1.checkAndUpgradeApp)();
+    // Warm-up & sync rules cache di background
+    (0, updater_js_1.syncGuidelinesRules)({ quiet: true }).catch(() => { });
     await (0, tui_js_1.runInteractiveTUI)();
 });
 program
     .command('ui')
     .description('Launch the interactive Terminal User Interface (TUI)')
     .action(async () => {
+    await (0, updater_js_1.checkAndUpgradeApp)();
+    (0, updater_js_1.syncGuidelinesRules)({ quiet: true }).catch(() => { });
     await (0, tui_js_1.runInteractiveTUI)();
+});
+program
+    .command('sync')
+    .description('Force check & update guidelines rules from server Qdrant')
+    .action(async () => {
+    console.log(chalk_1.default.cyan('🔍 Checking guidelines revision from server...'));
+    const rules = await (0, updater_js_1.syncGuidelinesRules)({ force: true, quiet: false });
+    console.log(chalk_1.default.green(`✔ Sync selesai! Total ${rules.length} aturan aktif di cache lokal.`));
+});
+program
+    .command('upgrade')
+    .description('Check and upgrade Lumio app to latest release')
+    .action(async () => {
+    const upgraded = await (0, updater_js_1.checkAndUpgradeApp)(false);
+    if (!upgraded) {
+        console.log(chalk_1.default.green(`✔ Lumio sudah versi paling baru (v${(0, version_js_1.getAppVersion)()}).`));
+    }
 });
 program
     .command('learn')
     .description('Learn conventions from a local feature folder or route path (hulu-ke-hilir)')
     .argument('<path>', 'Path to local folder/route containing code (e.g. ./src/features/payment or src/routes/users)')
     .action(async (pathArg) => {
+    await (0, updater_js_1.checkAndUpgradeApp)();
     await (0, learn_js_1.learnFeatureCommand)(pathArg);
 });
 program
@@ -43,6 +68,7 @@ program
     .description('Ingest markdown guidelines/coding standards into vector DB')
     .argument('<path>', 'Path to file or folder containing markdown guidelines')
     .action(async (pathArg) => {
+    await (0, updater_js_1.checkAndUpgradeApp)();
     await (0, ingest_js_1.ingestCommand)(pathArg);
 });
 program
@@ -59,6 +85,10 @@ program
     .option('--output-dir <path>', 'Custom directory to save markdown reports (default: .lumio-reviews)')
     .option('--json', 'Output review result as raw JSON')
     .action(async (options) => {
+    // Tier 1: Check App Version
+    await (0, updater_js_1.checkAndUpgradeApp)();
+    // Tier 2: Real-time Check Guidelines Revision sebelum review berjalan
+    await (0, updater_js_1.syncGuidelinesRules)({ quiet: false });
     await (0, review_js_1.reviewCommand)({
         ...options,
         fetchRemote: options.fetch,

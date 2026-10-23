@@ -41,7 +41,7 @@ exports.getVectorSize = getVectorSize;
 exports.getQdrantClient = getQdrantClient;
 exports.listAllIndexedGuidelines = listAllIndexedGuidelines;
 exports.insertChunks = insertChunks;
-exports.ingestDirectKnowledge = ingestDirectKnowledge;
+exports.insertGuideline = insertGuideline;
 exports.searchRelevantGuidelines = searchRelevantGuidelines;
 const lancedb = __importStar(require("@lancedb/lancedb"));
 const js_client_rest_1 = require("@qdrant/js-client-rest");
@@ -51,6 +51,8 @@ const chalk_1 = __importDefault(require("chalk"));
 const config_js_1 = require("./config.js");
 const local_embedder_js_1 = require("./local-embedder.js");
 const dedup_js_1 = require("./dedup.js");
+const updater_js_1 = require("./updater.js");
+const matcher_js_1 = require("./matcher.js");
 const TABLE_NAME = 'guidelines';
 let dbInstance = null;
 let qdrantInstance = null;
@@ -127,7 +129,7 @@ async function listAllIndexedGuidelines() {
     if (config.dbType === 'qdrant') {
         try {
             const { client, collection } = await getQdrantClient();
-            const points = await client.scroll(collection, { limit: 100, with_payload: true });
+            const points = await client.scroll(collection, { limit: 500, with_payload: true });
             return points.points.map((p) => {
                 const payload = p.payload;
                 return {
@@ -197,28 +199,24 @@ async function insertChunks(chunks) {
             wait: true,
             points,
         });
+        // Pemicu update cache lokal setelah admin ingest
+        await (0, updater_js_1.syncGuidelinesRules)({ force: true, quiet: true });
         return {
-            insertedCount: points.length,
+            insertedCount: uniqueChunks.length,
             duplicateCount: skippedTitles.length,
             skippedTitles,
         };
     }
+    // Local LanceDB fallback
     const db = await getDb();
     const tableNames = await db.tableNames();
     let existingRecords = [];
-    let tableHasContentHash = false;
+    let table = null;
     if (tableNames.includes(TABLE_NAME)) {
-        const table = await db.openTable(TABLE_NAME);
+        table = await db.openTable(TABLE_NAME);
         existingRecords = await table.query().toArray();
-        try {
-            const tblSchema = await table.schema();
-            tableHasContentHash = tblSchema.fields.some((f) => f.name === 'contentHash');
-        }
-        catch {
-            tableHasContentHash = false;
-        }
     }
-    const existingHashes = new Set(existingRecords.map((r) => r.contentHash || (0, dedup_js_1.getNormHash)(r.content)));
+    const existingHashes = new Set(existingRecords.map((r) => r.contentHash || (0, dedup_js_1.getNormHash)(r.content || '')));
     const uniqueChunks = [];
     const skippedTitles = [];
     for (const chunk of chunks) {
@@ -240,88 +238,65 @@ async function insertChunks(chunks) {
     }
     const texts = uniqueChunks.map((c) => `${c.title}\n${c.content}`);
     const vectors = await generateVectors(texts);
-    const newRecords = uniqueChunks.map((chunk, i) => {
-        const rec = {
-            id: chunk.id,
-            source: chunk.source,
-            title: chunk.title,
-            content: chunk.content,
-            vector: vectors[i],
-        };
-        if (!tableNames.includes(TABLE_NAME) || tableHasContentHash) {
-            rec.contentHash = (0, dedup_js_1.getNormHash)(chunk.content);
-        }
-        return rec;
-    });
-    if (tableNames.includes(TABLE_NAME)) {
-        const table = await db.openTable(TABLE_NAME);
-        await table.add(newRecords);
+    const records = uniqueChunks.map((chunk, i) => ({
+        id: chunk.id,
+        source: chunk.source,
+        title: chunk.title,
+        content: chunk.content,
+        contentHash: (0, dedup_js_1.getNormHash)(chunk.content),
+        vector: vectors[i],
+    }));
+    if (!table) {
+        table = await db.createTable(TABLE_NAME, records);
     }
     else {
-        await db.createTable(TABLE_NAME, newRecords);
+        await table.add(records);
     }
     return {
-        insertedCount: newRecords.length,
+        insertedCount: uniqueChunks.length,
         duplicateCount: skippedTitles.length,
         skippedTitles,
     };
 }
-async function ingestDirectKnowledge(title, content, source = 'interactive_conversation') {
+async function insertGuideline(title, content, source = 'manual') {
     const chunk = {
-        id: `direct_${Date.now()}`,
+        id: String(Math.floor(Math.random() * 1000000000)),
         source,
         title,
         content,
     };
     return await insertChunks([chunk]);
 }
+/**
+ * Cari guideline relevan.
+ * Mode Qdrant otomatis memanfaatkan Auto-Synced Rules Cache & Lexical Matching (0 external embedding call).
+ */
 async function searchRelevantGuidelines(query, limit = 5) {
     const config = await (0, config_js_1.loadConfig)();
     if (config.dbType === 'qdrant') {
         try {
-            const { client, collection } = await getQdrantClient();
-            const points = await client.scroll(collection, { limit: 100, with_payload: true });
-            if (points.points.length === 0)
-                return [];
-            const corpus = points.points.map((p) => `${p.payload?.title}\n${p.payload?.content}`);
-            let queryVector;
-            const isLocalEmb = config.embeddingModel === 'local' || (!config.embeddingApiKey && config.provider === '9router');
-            if (isLocalEmb) {
-                const vectorizer = (0, local_embedder_js_1.createTfIdfIndex)(corpus);
-                queryVector = vectorizer(query.slice(0, 4000));
+            // Ambil rules dari cache lokal / auto-sync patch terbaru
+            let allRules = [];
+            const cached = (0, updater_js_1.readCachedRules)();
+            if (cached && cached.rules && cached.rules.length > 0) {
+                allRules = cached.rules;
             }
             else {
-                const { embeddingClient } = await (0, config_js_1.getActiveAIProvider)();
-                const embModel = config.embeddingModel || 'text-embedding-3-small';
-                try {
-                    const { embedding } = await (0, ai_1.embed)({
-                        model: embeddingClient.embedding(embModel),
-                        value: query.slice(0, 4000),
-                    });
-                    queryVector = embedding;
-                }
-                catch (err) {
-                    throw new Error(`Gagal memanggil API embedding query (${embModel}): ${err.message || String(err)}`);
-                }
+                allRules = await (0, updater_js_1.syncGuidelinesRules)({ quiet: true });
             }
-            const searchResults = await client.query(collection, {
-                query: queryVector,
-                limit,
-                score_threshold: 0.05,
-                with_payload: true,
-            });
-            return searchResults.points.map((res) => ({
-                id: String(res.id),
-                source: res.payload?.source || 'remote_vps',
-                title: res.payload?.title || 'Untitled',
-                content: res.payload?.content || '',
-            }));
+            if (allRules.length === 0) {
+                return [];
+            }
+            // Ranking relevansi kode/scaffold terhadap pasal-pasal
+            return (0, matcher_js_1.rankGuidelinesByRelevance)(query, allRules, limit);
         }
         catch (err) {
-            console.error(chalk_1.default.red(`\n[Vector DB Search Error]: ${err.message || String(err)}`));
+            const detail = err.data?.status?.error || err.message || String(err);
+            console.error(chalk_1.default.red(`\n[Guidelines Rules Error]: ${detail}`));
             return [];
         }
     }
+    // Local LanceDB Mode
     const db = await getDb();
     const tableNames = await db.tableNames();
     if (!tableNames.includes(TABLE_NAME)) {
