@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { select, input } from '../core/nav.js';
-import { generateText } from 'ai';
-import { getActiveAIProvider } from '../core/config.js';
+import { loadConfig } from '../core/config.js';
+import { callLLM } from '../core/llm-client.js';
 import { searchRelevantGuidelines, listAllIndexedGuidelines, insertChunks } from '../core/db.js';
 import { DocChunk } from '../core/chunker.js';
 
@@ -13,7 +13,7 @@ import { DocChunk } from '../core/chunker.js';
  * - User bisa mengobrol, bertanya isi aturan, atau mengajari aturan baru langsung di dalam chat.
  */
 export async function runInteractiveKnowledgeDialog(): Promise<void> {
-  const { client, config } = await getActiveAIProvider();
+  const config = await loadConfig();
   const modelName = config.defaultModel || 'ag/gemini-3.8-flash';
 
   console.clear();
@@ -85,11 +85,8 @@ ${knowledgeContext}
         ? `Riwayat obrolan sebelumnya:\n${chatHistory.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n')}\n\nPertanyaan user saat ini:\n${cleaned}`
         : cleaned;
 
-      const { text: answer } = await generateText({
-        model: client(modelName),
-        system: systemPrompt,
-        prompt: historyPrompt,
-      });
+      const fullPrompt = `${systemPrompt}\n\n${historyPrompt}`;
+      const answer = await callLLM(fullPrompt, modelName);
 
       spinner.stop();
 

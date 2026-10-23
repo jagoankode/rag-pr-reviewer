@@ -7,8 +7,8 @@ exports.runInteractiveKnowledgeDialog = runInteractiveKnowledgeDialog;
 const chalk_1 = __importDefault(require("chalk"));
 const ora_1 = __importDefault(require("ora"));
 const nav_js_1 = require("../core/nav.js");
-const ai_1 = require("ai");
 const config_js_1 = require("../core/config.js");
+const llm_client_js_1 = require("../core/llm-client.js");
 const db_js_1 = require("../core/db.js");
 /**
  * Interactive 2-Way Conversational Dialog with RAG Knowledge Base.
@@ -17,7 +17,7 @@ const db_js_1 = require("../core/db.js");
  * - User bisa mengobrol, bertanya isi aturan, atau mengajari aturan baru langsung di dalam chat.
  */
 async function runInteractiveKnowledgeDialog() {
-    const { client, config } = await (0, config_js_1.getActiveAIProvider)();
+    const config = await (0, config_js_1.loadConfig)();
     const modelName = config.defaultModel || 'ag/gemini-3.8-flash';
     console.clear();
     console.log(chalk_1.default.bold.cyan('══════════════════════════════════════════════════════════════════════'));
@@ -75,11 +75,8 @@ ${knowledgeContext}
             const historyPrompt = chatHistory.length > 0
                 ? `Riwayat obrolan sebelumnya:\n${chatHistory.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n')}\n\nPertanyaan user saat ini:\n${cleaned}`
                 : cleaned;
-            const { text: answer } = await (0, ai_1.generateText)({
-                model: client(modelName),
-                system: systemPrompt,
-                prompt: historyPrompt,
-            });
+            const fullPrompt = `${systemPrompt}\n\n${historyPrompt}`;
+            const answer = await (0, llm_client_js_1.callLLM)(fullPrompt, modelName);
             spinner.stop();
             console.log(`\n${chalk_1.default.bold.cyan('RAG  :')} ${chalk_1.default.white(answer)}\n`);
             // Simpan ke history sesi

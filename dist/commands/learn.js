@@ -7,12 +7,47 @@ exports.learnFeatureCommand = learnFeatureCommand;
 const chalk_1 = __importDefault(require("chalk"));
 const ora_1 = __importDefault(require("ora"));
 const path_1 = __importDefault(require("path"));
-const ai_1 = require("ai");
 const code_scanner_js_1 = require("../core/code-scanner.js");
-const learn_schema_js_1 = require("../core/learn-schema.js");
 const config_js_1 = require("../core/config.js");
+const llm_client_js_1 = require("../core/llm-client.js");
 const db_js_1 = require("../core/db.js");
 const ingest_js_1 = require("./ingest.js");
+function extractMinedResult(rawText) {
+    const text = (rawText || '').trim();
+    // 1. Coba parse langsung
+    try {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === 'object' && Array.isArray(parsed.rules)) {
+            return parsed;
+        }
+    }
+    catch { }
+    // 2. Ekstrak dari blok markdown ```json ... ```
+    const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (codeBlockMatch && codeBlockMatch[1]) {
+        try {
+            const parsed = JSON.parse(codeBlockMatch[1].trim());
+            if (parsed && typeof parsed === 'object' && Array.isArray(parsed.rules)) {
+                return parsed;
+            }
+        }
+        catch { }
+    }
+    // 3. Fallback bracket matching
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        try {
+            const snippet = text.slice(firstBrace, lastBrace + 1);
+            const parsed = JSON.parse(snippet);
+            if (parsed && typeof parsed === 'object' && Array.isArray(parsed.rules)) {
+                return parsed;
+            }
+        }
+        catch { }
+    }
+    throw new Error('AI tidak mengembalikan struktur JSON konvensi yang valid.');
+}
 async function learnFeatureCommand(targetPath, modelOverride) {
     const resolved = (0, ingest_js_1.resolveUserPath)(targetPath);
     const spinner = (0, ora_1.default)(chalk_1.default.blue(`Memindai source code di ${resolved}...`)).start();
@@ -27,7 +62,7 @@ async function learnFeatureCommand(targetPath, modelOverride) {
         const codeContext = files
             .map((f) => `### File: ${f.relativePath}\n\`\`\`${f.ext.replace('.', '')}\n${f.content.slice(0, 3000)}\n\`\`\``)
             .join('\n\n');
-        const { client, config } = await (0, config_js_1.getActiveAIProvider)();
+        const config = await (0, config_js_1.loadConfig)();
         const modelName = modelOverride || config.defaultModel || 'ag/gemini-3.8-flash';
         spinner.text = chalk_1.default.magenta(`Menganalisis pola arsitektur & aturan coding via AI (${modelName})...`);
         const prompt = `You are a Principal Software Architect.
@@ -42,14 +77,25 @@ Extract rules across these categories:
 - Model & Database persistence conventions
 - Naming conventions (files, variables, interfaces)
 
+Return ONLY valid JSON matching this schema:
+{
+  "featureName": "string",
+  "architectureSummary": "string",
+  "rules": [
+    {
+      "layer": "routing | service | model | general",
+      "title": "string",
+      "convention": "string",
+      "exampleGood": "string or null"
+    }
+  ]
+}
+
 Source Code from folder:
 ${codeContext}
 `;
-        const { object: mined } = await (0, ai_1.generateObject)({
-            model: client(modelName),
-            schema: learn_schema_js_1.MinedConventionsSchema,
-            prompt,
-        });
+        const rawAIResponse = await (0, llm_client_js_1.callLLM)(prompt, modelName);
+        const mined = extractMinedResult(rawAIResponse);
         spinner.succeed(chalk_1.default.green(`Selesai menganalisis fitur "${mined.featureName}"! Ditemukan ${mined.rules.length} aturan konvensi.\n`));
         console.log(chalk_1.default.bold.cyan('═════════════════ HASIL EKSTRAKSI ARSITEKTUR & ATURAN ═════════════════'));
         console.log(chalk_1.default.yellow(`Fitur   : ${mined.featureName}`));

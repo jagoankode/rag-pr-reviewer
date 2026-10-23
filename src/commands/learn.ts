@@ -1,13 +1,51 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import path from 'path';
-import { generateObject } from 'ai';
 import { scanFeatureCodeFiles, CodeFileContext } from '../core/code-scanner.js';
 import { MinedConventionsSchema, MinedConventions } from '../core/learn-schema.js';
-import { getActiveAIProvider } from '../core/config.js';
+import { loadConfig } from '../core/config.js';
+import { callLLM } from '../core/llm-client.js';
 import { insertChunks, InsertResult } from '../core/db.js';
 import { DocChunk } from '../core/chunker.js';
 import { resolveUserPath } from './ingest.js';
+
+function extractMinedResult(rawText: string): MinedConventions {
+  const text = (rawText || '').trim();
+
+  // 1. Coba parse langsung
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.rules)) {
+      return parsed as MinedConventions;
+    }
+  } catch {}
+
+  // 2. Ekstrak dari blok markdown ```json ... ```
+  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlockMatch && codeBlockMatch[1]) {
+    try {
+      const parsed = JSON.parse(codeBlockMatch[1].trim());
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.rules)) {
+        return parsed as MinedConventions;
+      }
+    } catch {}
+  }
+
+  // 3. Fallback bracket matching
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      const snippet = text.slice(firstBrace, lastBrace + 1);
+      const parsed = JSON.parse(snippet);
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.rules)) {
+        return parsed as MinedConventions;
+      }
+    } catch {}
+  }
+
+  throw new Error('AI tidak mengembalikan struktur JSON konvensi yang valid.');
+}
 
 export async function learnFeatureCommand(targetPath: string, modelOverride?: string): Promise<boolean> {
   const resolved = resolveUserPath(targetPath);
@@ -28,7 +66,7 @@ export async function learnFeatureCommand(targetPath: string, modelOverride?: st
       .map((f) => `### File: ${f.relativePath}\n\`\`\`${f.ext.replace('.', '')}\n${f.content.slice(0, 3000)}\n\`\`\``)
       .join('\n\n');
 
-    const { client, config } = await getActiveAIProvider();
+    const config = await loadConfig();
     const modelName = modelOverride || config.defaultModel || 'ag/gemini-3.8-flash';
 
     spinner.text = chalk.magenta(`Menganalisis pola arsitektur & aturan coding via AI (${modelName})...`);
@@ -45,15 +83,26 @@ Extract rules across these categories:
 - Model & Database persistence conventions
 - Naming conventions (files, variables, interfaces)
 
+Return ONLY valid JSON matching this schema:
+{
+  "featureName": "string",
+  "architectureSummary": "string",
+  "rules": [
+    {
+      "layer": "routing | service | model | general",
+      "title": "string",
+      "convention": "string",
+      "exampleGood": "string or null"
+    }
+  ]
+}
+
 Source Code from folder:
 ${codeContext}
 `;
 
-    const { object: mined } = await generateObject({
-      model: client(modelName),
-      schema: MinedConventionsSchema,
-      prompt,
-    });
+    const rawAIResponse = await callLLM(prompt, modelName);
+    const mined = extractMinedResult(rawAIResponse);
 
     spinner.succeed(chalk.green(`Selesai menganalisis fitur "${mined.featureName}"! Ditemukan ${mined.rules.length} aturan konvensi.\n`));
 
