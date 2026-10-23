@@ -324,43 +324,9 @@ async function reviewWorkflowUI(config) {
             return;
         sourceBranch = rawSource.trim();
     }
-    const defaultDir = config.defaultReportDir || '.lumio-reviews';
-    const rawOutputDir = await (0, nav_js_1.input)({
-        message: 'Folder penyimpanan laporan Markdown review (atau "b" untuk batal):',
-        default: defaultDir,
-    });
-    if (rawOutputDir.trim().toLowerCase() === 'b' || rawOutputDir.trim().toLowerCase() === 'back')
-        return;
-    const outputDir = rawOutputDir.trim();
-    const defaultModel = config.defaultModel || 'ag/gemini-3.8-flash';
-    const savedModels = config.savedModels && config.savedModels.length > 0
-        ? Array.from(new Set([defaultModel, ...config.savedModels]))
-        : [defaultModel, 'ag/claude-sonnet-4-6', 'cx/gpt-6-astra'];
-    const modelChoices = savedModels.map((m) => ({
-        name: m === defaultModel ? `⚡ ${m} (Default Aktif)` : `🤖 ${m}`,
-        value: m,
-    }));
-    const model = await (0, nav_js_1.select)({
-        message: 'Pilih model LLM untuk review:',
-        choices: [
-            ...modelChoices,
-            { name: '➕ Ketik model lain sekali pakai (Custom)', value: 'custom' },
-            { name: '🔙 Batalkan & Kembali', value: 'back' },
-        ],
-    });
-    if (model === 'back')
-        return;
-    let selectedModel = model;
-    if (model === 'custom') {
-        const rawCustom = await (0, nav_js_1.input)({
-            message: 'Nama model AI (atau "b" untuk batal):',
-            default: defaultModel,
-        });
-        if (rawCustom.trim().toLowerCase() === 'b' || rawCustom.trim().toLowerCase() === 'back')
-            return;
-        selectedModel = rawCustom.trim();
-    }
-    console.log('');
+    const outputDir = config.defaultReportDir || '.lumio-reviews';
+    const selectedModel = config.defaultModel || 'ag/gemini-3.8-flash';
+    console.log(chalk_1.default.gray(`\nℹ️  Menggunakan Model: ${chalk_1.default.cyan(selectedModel)} | Output: ${chalk_1.default.cyan(outputDir)}\n`));
     await (0, review_js_1.reviewCommand)({
         staged: diffType === 'staged',
         target: targetBranch,
