@@ -69,7 +69,15 @@ async function getQdrantClient() {
     const apiKey = config.qdrantApiKey || undefined;
     const collection = config.qdrantCollection || 'guidelines';
     if (!qdrantInstance) {
-        qdrantInstance = new js_client_rest_1.QdrantClient({ url, apiKey });
+        const parsedUrl = new URL(url);
+        const defaultPort = parsedUrl.protocol === 'https:' ? 443 : 80;
+        const port = parsedUrl.port ? Number(parsedUrl.port) : defaultPort;
+        qdrantInstance = new js_client_rest_1.QdrantClient({
+            url,
+            port,
+            apiKey,
+            checkCompatibility: false,
+        });
     }
     const collections = await qdrantInstance.getCollections();
     const exists = collections.collections.some((c) => c.name === collection);

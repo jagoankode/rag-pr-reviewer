@@ -42,7 +42,16 @@ export async function getQdrantClient(): Promise<{ client: QdrantClient; collect
   const collection = config.qdrantCollection || 'guidelines';
 
   if (!qdrantInstance) {
-    qdrantInstance = new QdrantClient({ url, apiKey });
+    const parsedUrl = new URL(url);
+    const defaultPort = parsedUrl.protocol === 'https:' ? 443 : 80;
+    const port = parsedUrl.port ? Number(parsedUrl.port) : defaultPort;
+
+    qdrantInstance = new QdrantClient({
+      url,
+      port,
+      apiKey,
+      checkCompatibility: false,
+    });
   }
 
   const collections = await qdrantInstance.getCollections();
