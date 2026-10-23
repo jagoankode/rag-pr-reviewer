@@ -46,18 +46,15 @@ if [ -d "$HOME/.pr-rag" ] && [ ! -d "$LUMIO_DIR" ]; then
     cp "$HOME/.pr-rag/config.json" "$LUMIO_DIR/" 2>/dev/null || true
 fi
 
-echo -e "${YELLOW}1. Mengunduh & memperbarui aplikasi Lumio...${NC}"
+echo -e "${YELLOW}1. Mengunduh package Lumio...${NC}"
 mkdir -p "$LUMIO_DIR"
 mkdir -p "$BIN_DIR"
 
+# Download langsung via tarball (100% TANPA butuh git di laptop user)
 TMP_DOWNLOAD=$(mktemp -d)
-if command -v git >/dev/null 2>&1; then
-    git clone --depth=1 https://github.com/jagoankode/rag-pr-reviewer.git "$TMP_DOWNLOAD" --quiet
-else
-    curl -fsSL https://github.com/jagoankode/rag-pr-reviewer/archive/refs/heads/main.tar.gz | tar -xz -C "$TMP_DOWNLOAD" --strip-components=1
-fi
+curl -fsSL https://github.com/jagoankode/rag-pr-reviewer/archive/refs/heads/main.tar.gz | tar -xz -C "$TMP_DOWNLOAD" --strip-components=1
 
-# Pindahkan hanya dist dan package metadata (source code disembunyikan)
+# Pindahkan hanya dist dan package metadata (source code dan git history tidak diikutsertakan)
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cp -r "$TMP_DOWNLOAD/dist" "$INSTALL_DIR/"
