@@ -6,6 +6,7 @@ import { ingestCommand } from './commands/ingest.js';
 import { reviewCommand } from './commands/review.js';
 import { learnFeatureCommand } from './commands/learn.js';
 import { runInteractiveTUI } from './commands/tui.js';
+import { getAppVersion } from './core/version.js';
 
 dotenv.config();
 
@@ -14,7 +15,7 @@ const program = new Command();
 program
   .name('lumio')
   .description(chalk.cyan('✨ Lumio — AI-Powered PR Reviewer & Centralized Knowledge Engine'))
-  .version('2.0.0')
+  .version(getAppVersion(), '-v, --version', 'Tampilkan versi Lumio yang terinstall')
   .action(async () => {
     await runInteractiveTUI();
   });

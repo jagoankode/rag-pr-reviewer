@@ -89,19 +89,37 @@ ${relevantRules.length > 0
 ### File Diff to Review:
 ${fileDiff.annotatedText}
 `;
-                const { object } = await (0, ai_1.generateObject)({
-                    model: client(modelName),
-                    schema: schema_js_1.FileReviewResultSchema,
-                    prompt,
-                });
-                if (object.violations && object.violations.length > 0) {
+                let object = null;
+                try {
+                    const res = await (0, ai_1.generateObject)({
+                        model: client(modelName),
+                        schema: schema_js_1.FileReviewResultSchema,
+                        prompt,
+                    });
+                    object = res.object;
+                }
+                catch (genErr) {
+                    // Fallback jika model menghasilkan non-strict JSON atau output terpotong
+                    try {
+                        const rawTextRes = await (0, ai_1.generateText)({
+                            model: client(modelName),
+                            prompt: `${prompt}\n\nIMPORTANT: Return ONLY a valid JSON object matching this structure: {"violations": [], "notes": []}. No preamble or markdown fences.`,
+                        });
+                        const cleaned = rawTextRes.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+                        object = JSON.parse(cleaned);
+                    }
+                    catch {
+                        throw genErr;
+                    }
+                }
+                if (object && object.violations && object.violations.length > 0) {
                     allViolations.push(...object.violations);
                     fileSpinner.warn(chalk_1.default.yellow(`${progressLabel} ${fileDiff.file} ➔ Ditemukan ${object.violations.length} pelanggaran`));
                 }
                 else {
                     fileSpinner.succeed(chalk_1.default.gray(`${progressLabel} ${fileDiff.file} ➔ Bersih (Clean)`));
                 }
-                if (object.notes && object.notes.length > 0) {
+                if (object && object.notes && object.notes.length > 0) {
                     generalFeedback.push(...object.notes);
                 }
             }

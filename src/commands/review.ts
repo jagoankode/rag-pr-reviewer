@@ -6,7 +6,7 @@ import { parseAnnotatedDiffFiles } from '../core/diff-parser.js';
 import { searchRelevantGuidelines } from '../core/db.js';
 import { getActiveAIProvider } from '../core/config.js';
 import { saveReviewReport } from '../core/history.js';
-import { FileReviewResultSchema, PRReviewResult, LineViolation } from '../core/schema.js';
+import { FileReviewResultSchema, FileReviewResult, PRReviewResult, LineViolation } from '../core/schema.js';
 
 export interface ReviewOptions {
   staged?: boolean;
@@ -117,13 +117,30 @@ ${
 ${fileDiff.annotatedText}
 `;
 
-        const { object } = await generateObject({
-          model: client(modelName),
-          schema: FileReviewResultSchema,
-          prompt,
-        });
+        let object: FileReviewResult | null = null;
 
-        if (object.violations && object.violations.length > 0) {
+        try {
+          const res = await generateObject({
+            model: client(modelName),
+            schema: FileReviewResultSchema,
+            prompt,
+          });
+          object = res.object;
+        } catch (genErr: any) {
+          // Fallback jika model menghasilkan non-strict JSON atau output terpotong
+          try {
+            const rawTextRes = await generateText({
+              model: client(modelName),
+              prompt: `${prompt}\n\nIMPORTANT: Return ONLY a valid JSON object matching this structure: {"violations": [], "notes": []}. No preamble or markdown fences.`,
+            });
+            const cleaned = rawTextRes.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+            object = JSON.parse(cleaned);
+          } catch {
+            throw genErr;
+          }
+        }
+
+        if (object && object.violations && object.violations.length > 0) {
           allViolations.push(...object.violations);
           fileSpinner.warn(
             chalk.yellow(`${progressLabel} ${fileDiff.file} ➔ Ditemukan ${object.violations.length} pelanggaran`)
@@ -132,7 +149,7 @@ ${fileDiff.annotatedText}
           fileSpinner.succeed(chalk.gray(`${progressLabel} ${fileDiff.file} ➔ Bersih (Clean)`));
         }
 
-        if (object.notes && object.notes.length > 0) {
+        if (object && object.notes && object.notes.length > 0) {
           generalFeedback.push(...object.notes);
         }
       } catch (err: any) {

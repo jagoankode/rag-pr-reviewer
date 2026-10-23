@@ -9,12 +9,14 @@ import { runInteractiveKnowledgeDialog } from './dialog.js';
 import { isGitRepo, getAvailableBranches, getCurrentBranch } from '../core/git.js';
 import { loadConfig, saveConfig, AppConfig, DatabaseType } from '../core/config.js';
 import { listSavedReports, resolveReportDir, deleteReportFile, clearAllReports } from '../core/history.js';
+import { getAppVersion } from '../core/version.js';
 import { promises as fs } from 'fs';
 
 function printHeader(breadcrumb: string) {
   console.clear();
+  const version = getAppVersion();
   const banner = boxen(
-    `${chalk.bold.cyan('✨ Lumio')}\n${chalk.gray(
+    `${chalk.bold.cyan('✨ Lumio')} ${chalk.gray(`v${version}`)}\n${chalk.gray(
       'AI-Powered PR Reviewer & Centralized Knowledge Engine'
     )}\n\n${chalk.bold.yellow(`📍 ${breadcrumb}`)}`,
     {
@@ -552,9 +554,10 @@ async function showStatusUI(inRepo: boolean, config: AppConfig) {
   printHeader('Menu Utama > ⚙️ System Status');
   const currentBranch = inRepo ? await getCurrentBranch() : '-';
   const reportDir = resolveReportDir(config.defaultReportDir || '.lumio-reviews');
+  const version = getAppVersion();
 
   console.log(chalk.cyan('─── Status Konfigurasi & Lingkungan ───'));
-  console.log(`Brand Engine     : ${chalk.bold.yellow('✨ Lumio v2.0.0')}`);
+  console.log(`Brand Engine     : ${chalk.bold.yellow(`✨ Lumio v${version}`)}`);
   console.log(`Git Repository   : ${inRepo ? chalk.green(`Aktif (Branch: ${currentBranch})`) : chalk.red('Tidak Terdeteksi')}`);
   console.log(`Database Mode    : ${config.dbType === 'qdrant' ? chalk.bold.green('🌐 Remote VPS Qdrant') : chalk.bold.blue('💻 Local LanceDB')}`);
   if (config.dbType === 'qdrant') {

@@ -15,10 +15,12 @@ const dialog_js_1 = require("./dialog.js");
 const git_js_1 = require("../core/git.js");
 const config_js_1 = require("../core/config.js");
 const history_js_1 = require("../core/history.js");
+const version_js_1 = require("../core/version.js");
 const fs_1 = require("fs");
 function printHeader(breadcrumb) {
     console.clear();
-    const banner = (0, boxen_1.default)(`${chalk_1.default.bold.cyan('✨ Lumio')}\n${chalk_1.default.gray('AI-Powered PR Reviewer & Centralized Knowledge Engine')}\n\n${chalk_1.default.bold.yellow(`📍 ${breadcrumb}`)}`, {
+    const version = (0, version_js_1.getAppVersion)();
+    const banner = (0, boxen_1.default)(`${chalk_1.default.bold.cyan('✨ Lumio')} ${chalk_1.default.gray(`v${version}`)}\n${chalk_1.default.gray('AI-Powered PR Reviewer & Centralized Knowledge Engine')}\n\n${chalk_1.default.bold.yellow(`📍 ${breadcrumb}`)}`, {
         padding: 1,
         margin: { top: 0, bottom: 1, left: 1, right: 1 },
         borderStyle: 'round',
@@ -514,8 +516,9 @@ async function showStatusUI(inRepo, config) {
     printHeader('Menu Utama > ⚙️ System Status');
     const currentBranch = inRepo ? await (0, git_js_1.getCurrentBranch)() : '-';
     const reportDir = (0, history_js_1.resolveReportDir)(config.defaultReportDir || '.lumio-reviews');
+    const version = (0, version_js_1.getAppVersion)();
     console.log(chalk_1.default.cyan('─── Status Konfigurasi & Lingkungan ───'));
-    console.log(`Brand Engine     : ${chalk_1.default.bold.yellow('✨ Lumio v2.0.0')}`);
+    console.log(`Brand Engine     : ${chalk_1.default.bold.yellow(`✨ Lumio v${version}`)}`);
     console.log(`Git Repository   : ${inRepo ? chalk_1.default.green(`Aktif (Branch: ${currentBranch})`) : chalk_1.default.red('Tidak Terdeteksi')}`);
     console.log(`Database Mode    : ${config.dbType === 'qdrant' ? chalk_1.default.bold.green('🌐 Remote VPS Qdrant') : chalk_1.default.bold.blue('💻 Local LanceDB')}`);
     if (config.dbType === 'qdrant') {

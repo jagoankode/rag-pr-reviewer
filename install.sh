@@ -104,6 +104,10 @@ detect_and_add_path "$HOME/.zshrc"
 detect_and_add_path "$HOME/.bashrc"
 
 echo -e "\n${GREEN}✔ Lumio berhasil terinstall!${NC}"
+INSTALLED_VER=$(node -e "try { console.log(require('$INSTALL_DIR/package.json').version); } catch(e) { console.log(''); }")
+if [ -n "$INSTALLED_VER" ]; then
+    echo -e "Versi aktif: ${CYAN}v${INSTALLED_VER}${NC}"
+fi
 if [ -d "$LUMIO_DIR/db" ]; then
     echo -e "${GREEN}🔒 Data Database & Konfigurasi tetap aman dan terjaga.${NC}"
 fi

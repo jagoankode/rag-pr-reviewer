@@ -11,12 +11,13 @@ const ingest_js_1 = require("./commands/ingest.js");
 const review_js_1 = require("./commands/review.js");
 const learn_js_1 = require("./commands/learn.js");
 const tui_js_1 = require("./commands/tui.js");
+const version_js_1 = require("./core/version.js");
 dotenv_1.default.config();
 const program = new commander_1.Command();
 program
     .name('lumio')
     .description(chalk_1.default.cyan('✨ Lumio — AI-Powered PR Reviewer & Centralized Knowledge Engine'))
-    .version('2.0.0')
+    .version((0, version_js_1.getAppVersion)(), '-v, --version', 'Tampilkan versi Lumio yang terinstall')
     .action(async () => {
     await (0, tui_js_1.runInteractiveTUI)();
 });
