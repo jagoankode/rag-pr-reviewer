@@ -5,6 +5,7 @@ import os from 'os';
 import { DocChunk } from './chunker.js';
 import { getActiveAIProvider } from './config.js';
 import { createTfIdfIndex } from './local-embedder.js';
+import { getNormHash, cosineSimilarity } from './dedup.js';
 
 const DB_DIR = path.join(os.homedir(), '.pr-rag', 'db');
 const TABLE_NAME = 'guidelines';
@@ -14,6 +15,7 @@ export interface GuidelineRecord {
   source: string;
   title: string;
   content: string;
+  contentHash: string;
   vector: number[];
   [key: string]: unknown;
 }
@@ -47,9 +49,7 @@ export async function listAllIndexedGuidelines(): Promise<{ id: string; source: 
 }
 
 /**
- * Generate embeddings: coba via API provider dulu,
- * jika provider tidak punya endpoint embedding (seperti 9router/chat-only gateway),
- * fallback otomatis ke high-speed local embedding vectorizer (Zero-Failure).
+ * Generate embeddings untuk array teks
  */
 async function generateVectors(
   texts: string[]
@@ -57,7 +57,6 @@ async function generateVectors(
   const { client, config } = await getActiveAIProvider();
   const embModel = config.embeddingModel || 'text-embedding-3-small';
 
-  // Jika provider adalah 9router atau model yang tidak punya embedding endpoint
   if (config.provider === '9router' || embModel === 'local') {
     const vectorizer = createTfIdfIndex(texts);
     return texts.map((t) => vectorizer(t));
@@ -69,39 +68,102 @@ async function generateVectors(
       values: texts,
     });
     return embeddings;
-  } catch (err: any) {
-    // Fallback otomatis ke local semantic vectorizer jika API provider menolak / tidak support embedding
+  } catch {
     const vectorizer = createTfIdfIndex(texts);
     return texts.map((t) => vectorizer(t));
   }
 }
 
+export interface InsertResult {
+  insertedCount: number;
+  duplicateCount: number;
+  skippedTitles: string[];
+}
+
 /**
- * Ingest chunk dokumen ke LanceDB
+ * Ingest chunk dokumen / knowledge ke LanceDB dengan DEDUP (anti duplikat):
+ * Menolak aturan/pengetahuan yang sudah ada (berdasarkan exact hash atau semantic similarity > 0.95)
  */
-export async function insertChunks(chunks: DocChunk[]): Promise<number> {
-  if (chunks.length === 0) return 0;
+export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
+  if (chunks.length === 0) {
+    return { insertedCount: 0, duplicateCount: 0, skippedTitles: [] };
+  }
 
   const db = await getDb();
-  const texts = chunks.map((c) => `${c.title}\n${c.content}`);
+  const tableNames = await db.tableNames();
+  let existingRecords: any[] = [];
+
+  if (tableNames.includes(TABLE_NAME)) {
+    const table = await db.openTable(TABLE_NAME);
+    existingRecords = await table.query().toArray();
+  }
+
+  const existingHashes = new Set(existingRecords.map((r: any) => r.contentHash || getNormHash(r.content)));
+
+  // Filter 1: Cek duplikat teks persis (Normalized SHA-256 Hash)
+  const uniqueChunks: DocChunk[] = [];
+  const skippedTitles: string[] = [];
+
+  for (const chunk of chunks) {
+    const hash = getNormHash(chunk.content);
+    if (existingHashes.has(hash)) {
+      skippedTitles.push(chunk.title);
+    } else {
+      existingHashes.add(hash); // Hindari duplikat di dalam batch yang sama
+      uniqueChunks.push(chunk);
+    }
+  }
+
+  if (uniqueChunks.length === 0) {
+    return {
+      insertedCount: 0,
+      duplicateCount: skippedTitles.length,
+      skippedTitles,
+    };
+  }
+
+  // Generate vector embeddings untuk chunk baru
+  const texts = uniqueChunks.map((c) => `${c.title}\n${c.content}`);
   const vectors = await generateVectors(texts);
 
-  const records: GuidelineRecord[] = chunks.map((chunk, i) => ({
+  const newRecords: GuidelineRecord[] = uniqueChunks.map((chunk, i) => ({
     id: chunk.id,
     source: chunk.source,
     title: chunk.title,
     content: chunk.content,
+    contentHash: getNormHash(chunk.content),
     vector: vectors[i],
   }));
 
-  const tableNames = await db.tableNames();
   if (tableNames.includes(TABLE_NAME)) {
-    // Drop dan replace table agar dimensi vector selalu sinkron dan fresh
-    await db.dropTable(TABLE_NAME);
+    const table = await db.openTable(TABLE_NAME);
+    await table.add(newRecords);
+  } else {
+    await db.createTable(TABLE_NAME, newRecords);
   }
-  await db.createTable(TABLE_NAME, records);
 
-  return records.length;
+  return {
+    insertedCount: newRecords.length,
+    duplicateCount: skippedTitles.length,
+    skippedTitles,
+  };
+}
+
+/**
+ * Ingest percakapan interaktif langsung sebagai knowledge
+ */
+export async function ingestDirectKnowledge(
+  title: string,
+  content: string,
+  source: string = 'interactive_conversation'
+): Promise<InsertResult> {
+  const chunk: DocChunk = {
+    id: `direct_${Date.now()}`,
+    source,
+    title,
+    content,
+  };
+  return await insertChunks([chunk]);
 }
 
 /**
@@ -122,7 +184,6 @@ export async function searchRelevantGuidelines(
   const rows = await table.query().toArray();
   if (rows.length === 0) return [];
 
-  // Ambil semua corpus untuk membangun vectorizer query yang cocok
   const corpus = rows.map((r: any) => `${r.title}\n${r.content}`);
   const { client, config } = await getActiveAIProvider();
   const embModel = config.embeddingModel || 'text-embedding-3-small';

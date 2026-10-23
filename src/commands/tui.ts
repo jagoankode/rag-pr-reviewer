@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import boxen from 'boxen';
 import { select, input, confirm, password } from '@inquirer/prompts';
-import { ingestCommand } from './ingest.js';
+import { ingestCommand, ingestDirectRuleCommand } from './ingest.js';
 import { reviewCommand } from './review.js';
 import { inspectGuidelinesCommand } from './guidelines.js';
 import { isGitRepo, getAvailableBranches, getCurrentBranch } from '../core/git.js';
@@ -48,7 +48,7 @@ export async function runInteractiveTUI() {
           value: 'inspect_rules',
         },
         {
-          name: '📚 Ingest Guidelines / Conventions ke Vector DB',
+          name: '📚 Ingest Knowledge / Conventions ke Vector DB',
           value: 'ingest',
         },
         {
@@ -82,15 +82,45 @@ export async function runInteractiveTUI() {
     } else if (choice === 'history') {
       await viewHistoryUI(config.defaultReportDir || '.rag-reviews');
     } else if (choice === 'ingest') {
-      const docPath = await input({
-        message: 'Masukkan path file/folder panduan markdown:',
-        default: './docs',
-        validate: (val) => (val.trim().length > 0 ? true : 'Path tidak boleh kosong'),
+      const ingestType = await select({
+        message: 'Pilih sumber pengetahuan yang ingin di-ingest:',
+        choices: [
+          {
+            name: '📁 Dari File / Folder Dokumen (.md, .txt)',
+            value: 'file',
+          },
+          {
+            name: '💬 Input Percakapan / Aturan Baru Secara Langsung (Interactive Knowledge)',
+            value: 'interactive',
+          },
+        ],
       });
 
-      console.log('');
-      await ingestCommand(docPath);
-      console.log('');
+      if (ingestType === 'file') {
+        const docPath = await input({
+          message: 'Masukkan path file/folder dokumen:',
+          default: './docs',
+          validate: (val) => (val.trim().length > 0 ? true : 'Path tidak boleh kosong'),
+        });
+
+        console.log('');
+        await ingestCommand(docPath);
+        console.log('');
+      } else if (ingestType === 'interactive') {
+        const title = await input({
+          message: 'Judul aturan / pengetahuan baru (misal: "Aturan Penamaan DTO"):',
+          validate: (val) => (val.trim().length > 0 ? true : 'Judul tidak boleh kosong'),
+        });
+
+        const content = await input({
+          message: 'Isi aturan atau instruksi convention (bisa deskripsi bebas / contoh code):',
+          validate: (val) => (val.trim().length > 0 ? true : 'Isi aturan tidak boleh kosong'),
+        });
+
+        console.log('');
+        await ingestDirectRuleCommand(title, content);
+        console.log('');
+      }
     } else if (choice === 'review') {
       const currentBranch = await getCurrentBranch();
 

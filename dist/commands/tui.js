@@ -43,7 +43,7 @@ async function runInteractiveTUI() {
                     value: 'inspect_rules',
                 },
                 {
-                    name: '📚 Ingest Guidelines / Conventions ke Vector DB',
+                    name: '📚 Ingest Knowledge / Conventions ke Vector DB',
                     value: 'ingest',
                 },
                 {
@@ -78,14 +78,42 @@ async function runInteractiveTUI() {
             await viewHistoryUI(config.defaultReportDir || '.rag-reviews');
         }
         else if (choice === 'ingest') {
-            const docPath = await (0, prompts_1.input)({
-                message: 'Masukkan path file/folder panduan markdown:',
-                default: './docs',
-                validate: (val) => (val.trim().length > 0 ? true : 'Path tidak boleh kosong'),
+            const ingestType = await (0, prompts_1.select)({
+                message: 'Pilih sumber pengetahuan yang ingin di-ingest:',
+                choices: [
+                    {
+                        name: '📁 Dari File / Folder Dokumen (.md, .txt)',
+                        value: 'file',
+                    },
+                    {
+                        name: '💬 Input Percakapan / Aturan Baru Secara Langsung (Interactive Knowledge)',
+                        value: 'interactive',
+                    },
+                ],
             });
-            console.log('');
-            await (0, ingest_js_1.ingestCommand)(docPath);
-            console.log('');
+            if (ingestType === 'file') {
+                const docPath = await (0, prompts_1.input)({
+                    message: 'Masukkan path file/folder dokumen:',
+                    default: './docs',
+                    validate: (val) => (val.trim().length > 0 ? true : 'Path tidak boleh kosong'),
+                });
+                console.log('');
+                await (0, ingest_js_1.ingestCommand)(docPath);
+                console.log('');
+            }
+            else if (ingestType === 'interactive') {
+                const title = await (0, prompts_1.input)({
+                    message: 'Judul aturan / pengetahuan baru (misal: "Aturan Penamaan DTO"):',
+                    validate: (val) => (val.trim().length > 0 ? true : 'Judul tidak boleh kosong'),
+                });
+                const content = await (0, prompts_1.input)({
+                    message: 'Isi aturan atau instruksi convention (bisa deskripsi bebas / contoh code):',
+                    validate: (val) => (val.trim().length > 0 ? true : 'Isi aturan tidak boleh kosong'),
+                });
+                console.log('');
+                await (0, ingest_js_1.ingestDirectRuleCommand)(title, content);
+                console.log('');
+            }
         }
         else if (choice === 'review') {
             const currentBranch = await (0, git_js_1.getCurrentBranch)();
