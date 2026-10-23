@@ -1,12 +1,12 @@
 import chalk from 'chalk';
 import ora from 'ora';
-import { generateObject, generateText } from 'ai';
 import { isGitRepo, getGitDiff } from '../core/git.js';
 import { parseAnnotatedDiffFiles } from '../core/diff-parser.js';
 import { searchRelevantGuidelines } from '../core/db.js';
-import { getActiveAIProvider } from '../core/config.js';
 import { saveReviewReport } from '../core/history.js';
-import { FileReviewResultSchema, FileReviewResult, PRReviewResult, LineViolation } from '../core/schema.js';
+import { loadConfig } from '../core/config.js';
+import { callLLM } from '../core/llm-client.js';
+import { FileReviewResult, PRReviewResult, LineViolation } from '../core/schema.js';
 
 export interface ReviewOptions {
   staged?: boolean;
@@ -128,7 +128,7 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
       return;
     }
 
-    const { client, config } = await getActiveAIProvider();
+    const config = await loadConfig();
     const modelName = options.model || config.defaultModel || 'ag/gemini-3.8-flash';
 
     const totalFiles = fileDiffs.length;
@@ -177,24 +177,10 @@ ${fileDiff.annotatedText}
         let object: FileReviewResult | null = null;
 
         try {
-          const res = await generateObject({
-            model: client(modelName),
-            schema: FileReviewResultSchema,
-            prompt,
-          });
-          object = res.object;
-        } catch (genErr: any) {
-          // Model seperti Claude (ag/claude-sonnet-4-6) di proxy sering menyertakan thinking process/preamble
-          // Fallback menggunakan generateText + extractor multi-layer
-          try {
-            const rawTextRes = await generateText({
-              model: client(modelName),
-              prompt: `${prompt}\n\nIMPORTANT: Return ONLY a valid JSON object matching this structure: {"violations": [], "notes": []}. Do not output any thinking or conversational text.`,
-            });
-            object = extractReviewResult(rawTextRes.text);
-          } catch {
-            throw genErr;
-          }
+          const rawResponse = await callLLM(prompt, modelName);
+          object = extractReviewResult(rawResponse);
+        } catch (callErr: any) {
+          throw callErr;
         }
 
         if (object && object.violations && object.violations.length > 0) {

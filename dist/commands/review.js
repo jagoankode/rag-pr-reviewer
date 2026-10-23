@@ -6,13 +6,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.reviewCommand = reviewCommand;
 const chalk_1 = __importDefault(require("chalk"));
 const ora_1 = __importDefault(require("ora"));
-const ai_1 = require("ai");
 const git_js_1 = require("../core/git.js");
 const diff_parser_js_1 = require("../core/diff-parser.js");
 const db_js_1 = require("../core/db.js");
-const config_js_1 = require("../core/config.js");
 const history_js_1 = require("../core/history.js");
-const schema_js_1 = require("../core/schema.js");
+const config_js_1 = require("../core/config.js");
+const llm_client_js_1 = require("../core/llm-client.js");
 function extractReviewResult(rawText) {
     const text = (rawText || '').trim();
     // 1. Coba parse langsung
@@ -108,7 +107,7 @@ async function reviewCommand(options) {
             spinner.info(chalk_1.default.yellow('Tidak ada perubahan baris kode (mungkin hanya file biner/dihapus).'));
             return;
         }
-        const { client, config } = await (0, config_js_1.getActiveAIProvider)();
+        const config = await (0, config_js_1.loadConfig)();
         const modelName = options.model || config.defaultModel || 'ag/gemini-3.8-flash';
         const totalFiles = fileDiffs.length;
         spinner.succeed(chalk_1.default.green(`Ditemukan ${totalFiles} file yang berubah. Memulai analisis per file...\n`));
@@ -147,26 +146,11 @@ ${fileDiff.annotatedText}
 `;
                 let object = null;
                 try {
-                    const res = await (0, ai_1.generateObject)({
-                        model: client(modelName),
-                        schema: schema_js_1.FileReviewResultSchema,
-                        prompt,
-                    });
-                    object = res.object;
+                    const rawResponse = await (0, llm_client_js_1.callLLM)(prompt, modelName);
+                    object = extractReviewResult(rawResponse);
                 }
-                catch (genErr) {
-                    // Model seperti Claude (ag/claude-sonnet-4-6) di proxy sering menyertakan thinking process/preamble
-                    // Fallback menggunakan generateText + extractor multi-layer
-                    try {
-                        const rawTextRes = await (0, ai_1.generateText)({
-                            model: client(modelName),
-                            prompt: `${prompt}\n\nIMPORTANT: Return ONLY a valid JSON object matching this structure: {"violations": [], "notes": []}. Do not output any thinking or conversational text.`,
-                        });
-                        object = extractReviewResult(rawTextRes.text);
-                    }
-                    catch {
-                        throw genErr;
-                    }
+                catch (callErr) {
+                    throw callErr;
                 }
                 if (object && object.violations && object.violations.length > 0) {
                     allViolations.push(...object.violations);
