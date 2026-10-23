@@ -5,7 +5,7 @@ import { ingestCommand } from './ingest.js';
 import { reviewCommand } from './review.js';
 import { isGitRepo, getAvailableBranches, getCurrentBranch } from '../core/git.js';
 import { loadConfig, saveConfig, AppConfig } from '../core/config.js';
-import { listSavedReports, resolveReportDir } from '../core/history.js';
+import { listSavedReports, resolveReportDir, deleteReportFile, clearAllReports } from '../core/history.js';
 import { marked } from 'marked';
 import { promises as fs } from 'fs';
 
@@ -48,7 +48,7 @@ export async function runInteractiveTUI() {
           value: 'ingest',
         },
         {
-          name: '📜 View Review History',
+          name: '📜 View & Manage Review History (Buka / Hapus Report)',
           value: 'history',
         },
         {
@@ -206,7 +206,7 @@ export async function runInteractiveTUI() {
 
 async function viewHistoryUI(defaultDir: string = '.rag-reviews') {
   const customDir = await input({
-    message: 'Folder laporan markdown yang ingin dibuka:',
+    message: 'Folder laporan markdown yang ingin dikelola:',
     default: defaultDir,
   });
 
@@ -218,24 +218,58 @@ async function viewHistoryUI(defaultDir: string = '.rag-reviews') {
     return;
   }
 
-  const choices = reports.map((r) => ({
-    name: `${chalk.cyan(r.filename)} ${chalk.gray(`(${r.date.toLocaleString()})`)}`,
+  const choices: Array<{ name: string; value: string }> = reports.map((r) => ({
+    name: `📄 ${chalk.cyan(r.filename)} ${chalk.gray(`(${r.date.toLocaleString()})`)}`,
     value: r.fullPath,
   }));
 
+  choices.push({ name: chalk.red('🗑️  Hapus SEMUA report di folder ini'), value: 'clear_all' });
   choices.push({ name: '🔙 Kembali ke menu utama', value: 'back' });
 
-  const chosenPath = await select({
-    message: 'Pilih laporan review yang ingin dilihat:',
+  const chosenAction = await select({
+    message: `Pilih laporan review di ${chalk.yellow(resolved)}:`,
     choices,
   });
 
-  if (chosenPath === 'back') return;
+  if (chosenAction === 'back') return;
 
-  const content = await fs.readFile(chosenPath, 'utf-8');
-  console.log(chalk.bold.cyan('\n═════════════════════ SAVED REVIEW REPORT ═════════════════════\n'));
-  console.log(marked(content));
-  console.log(chalk.bold.cyan('═══════════════════════════════════════════════════════════════\n'));
+  if (chosenAction === 'clear_all') {
+    const sure = await confirm({
+      message: `Yakin ingin menghapus seluruh (${reports.length}) file report di ${resolved}?`,
+      default: false,
+    });
+    if (sure) {
+      const deletedCount = await clearAllReports(resolved);
+      console.log(chalk.green(`\n✔ Berhasil menghapus ${deletedCount} file report markdown.\n`));
+    }
+    return;
+  }
+
+  // Tampilkan submenu aksi untuk file yang dipilih
+  const fileAction = await select({
+    message: `Aksi untuk ${chalk.cyan(chosenAction)}:`,
+    choices: [
+      { name: '📖 Baca isi laporan (View Report)', value: 'view' },
+      { name: chalk.red('🗑️  Hapus file ini (Delete Report)'), value: 'delete' },
+      { name: '🔙 Batal', value: 'cancel' },
+    ],
+  });
+
+  if (fileAction === 'view') {
+    const content = await fs.readFile(chosenAction, 'utf-8');
+    console.log(chalk.bold.cyan('\n═════════════════════ SAVED REVIEW REPORT ═════════════════════\n'));
+    console.log(marked(content));
+    console.log(chalk.bold.cyan('═══════════════════════════════════════════════════════════════\n'));
+  } else if (fileAction === 'delete') {
+    const confirmDelete = await confirm({
+      message: `Hapus file ${chosenAction}?`,
+      default: true,
+    });
+    if (confirmDelete) {
+      await deleteReportFile(chosenAction);
+      console.log(chalk.green(`\n✔ File report berhasil dihapus.\n`));
+    }
+  }
 }
 
 async function configureAIProviderUI(currentConfig: AppConfig) {

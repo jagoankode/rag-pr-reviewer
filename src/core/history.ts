@@ -150,3 +150,27 @@ export async function listSavedReports(dirPath?: string): Promise<{ filename: st
     return [];
   }
 }
+
+/**
+ * Menghapus satu file report
+ */
+export async function deleteReportFile(filePath: string): Promise<void> {
+  await fs.unlink(filePath);
+}
+
+/**
+ * Menghapus semua file report di dalam direktori
+ */
+export async function clearAllReports(dirPath?: string): Promise<number> {
+  const dir = resolveReportDir(dirPath);
+  try {
+    const files = await fs.readdir(dir);
+    const mdFiles = files.filter((f) => f.endsWith('.md'));
+    for (const f of mdFiles) {
+      await fs.unlink(path.join(dir, f));
+    }
+    return mdFiles.length;
+  } catch {
+    return 0;
+  }
+}

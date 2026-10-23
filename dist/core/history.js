@@ -7,6 +7,8 @@ exports.resolveReportDir = resolveReportDir;
 exports.formatReportToMarkdown = formatReportToMarkdown;
 exports.saveReviewReport = saveReviewReport;
 exports.listSavedReports = listSavedReports;
+exports.deleteReportFile = deleteReportFile;
+exports.clearAllReports = clearAllReports;
 const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
@@ -129,5 +131,28 @@ async function listSavedReports(dirPath) {
     }
     catch {
         return [];
+    }
+}
+/**
+ * Menghapus satu file report
+ */
+async function deleteReportFile(filePath) {
+    await fs_1.promises.unlink(filePath);
+}
+/**
+ * Menghapus semua file report di dalam direktori
+ */
+async function clearAllReports(dirPath) {
+    const dir = resolveReportDir(dirPath);
+    try {
+        const files = await fs_1.promises.readdir(dir);
+        const mdFiles = files.filter((f) => f.endsWith('.md'));
+        for (const f of mdFiles) {
+            await fs_1.promises.unlink(path_1.default.join(dir, f));
+        }
+        return mdFiles.length;
+    }
+    catch {
+        return 0;
     }
 }
