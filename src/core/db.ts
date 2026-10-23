@@ -33,7 +33,11 @@ export async function getDb(): Promise<lancedb.Connection> {
 
 export async function getQdrantClient(): Promise<{ client: QdrantClient; collection: string }> {
   const config = await loadConfig();
-  const url = config.qdrantUrl || 'https://knowlage.jagoankode.site';
+  let rawUrl = (config.qdrantUrl || 'https://knowlage.jagoankode.site').trim();
+  if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+    rawUrl = `https://${rawUrl}`;
+  }
+  const url = rawUrl;
   const apiKey = config.qdrantApiKey || undefined;
   const collection = config.qdrantCollection || 'guidelines';
 

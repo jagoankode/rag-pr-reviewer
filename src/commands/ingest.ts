@@ -14,7 +14,70 @@ export function resolveUserPath(inputPath: string): string {
   return path.resolve(process.cwd(), cleaned);
 }
 
+export function isWebUrl(input: string): boolean {
+  const trimmed = input.trim();
+  return /^https?:\/\//i.test(trimmed);
+}
+
+export async function fetchUrlContent(url: string): Promise<{ title: string; content: string }> {
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; LumioBot/2.0; +https://github.com/jagoankode/rag-pr-reviewer)',
+      'Accept': 'text/plain, text/markdown, text/html, application/json',
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  }
+
+  const text = await res.text();
+  const parsedUrl = new URL(url);
+  const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
+  const title = pathParts.length > 0 ? pathParts[pathParts.length - 1] : parsedUrl.hostname;
+
+  return { title, content: text };
+}
+
 export async function ingestCommand(targetPath: string): Promise<boolean> {
+  const trimmed = targetPath.trim();
+  const isUrl = isWebUrl(trimmed);
+
+  if (isUrl) {
+    const spinner = ora(chalk.blue(`Mengambil konten dokumen dari URL: ${trimmed}...`)).start();
+    try {
+      const { title, content } = await fetchUrlContent(trimmed);
+      const chunks = chunkMarkdown(content, trimmed);
+
+      if (chunks.length === 0) {
+        spinner.warn(chalk.yellow('Konten dari URL kosong atau teks tidak cukup panjang untuk diproses.'));
+        return false;
+      }
+
+      spinner.text = chalk.cyan(`Memeriksa duplikasi & menyimpan chunks baru...`);
+      const result: InsertResult = await insertChunks(chunks);
+
+      if (result.insertedCount === 0 && result.duplicateCount > 0) {
+        spinner.info(
+          chalk.yellow(`Semua (${result.duplicateCount}) aturan dari URL sudah ada di database (ditolak agar tidak duplikat).`)
+        );
+      } else {
+        spinner.succeed(
+          chalk.green(
+            `Berhasil meng-ingest ${result.insertedCount} aturan baru dari URL!` +
+              (result.duplicateCount > 0
+                ? chalk.gray(` (${result.duplicateCount} aturan duplikat ditolak/dilewati)`)
+                : '')
+          )
+        );
+      }
+      return true;
+    } catch (error: any) {
+      spinner.fail(chalk.red(`Gagal meng-ingest dokumen dari URL: ${error.message}`));
+      return false;
+    }
+  }
+
   const resolvedPath = resolveUserPath(targetPath);
   const spinner = ora(chalk.blue(`Scanning files at: ${resolvedPath}...`)).start();
 
@@ -39,12 +102,12 @@ export async function ingestCommand(targetPath: string): Promise<boolean> {
       return false;
     }
 
-    spinner.text = chalk.cyan(`Memeriksa duplikasi & menyimpan chunks baru ke LanceDB...`);
+    spinner.text = chalk.cyan(`Memeriksa duplikasi & menyimpan chunks baru...`);
     const result: InsertResult = await insertChunks(allChunks);
 
     if (result.insertedCount === 0 && result.duplicateCount > 0) {
       spinner.info(
-        chalk.yellow(`Semua (${result.duplicateCount}) aturan sudah ada di LanceDB (ditolak agar tidak duplikat).`)
+        chalk.yellow(`Semua (${result.duplicateCount}) aturan sudah ada di database (ditolak agar tidak duplikat).`)
       );
     } else {
       spinner.succeed(

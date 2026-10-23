@@ -144,11 +144,16 @@ async function configureDatabaseUI(currentConfig) {
     let qdrantApiKey = currentConfig.qdrantApiKey || '';
     let qdrantCollection = currentConfig.qdrantCollection || 'guidelines';
     if (selectedMode === 'qdrant') {
-        qdrantUrl = await (0, prompts_1.input)({
+        let inputUrl = await (0, prompts_1.input)({
             message: 'Qdrant VPS Server URL:',
             default: qdrantUrl,
             validate: (v) => (v.trim().length > 0 ? true : 'URL tidak boleh kosong'),
         });
+        inputUrl = inputUrl.trim();
+        if (!inputUrl.startsWith('http://') && !inputUrl.startsWith('https://')) {
+            inputUrl = `https://${inputUrl}`;
+        }
+        qdrantUrl = inputUrl;
         qdrantCollection = await (0, prompts_1.input)({
             message: 'Nama Collection di Qdrant:',
             default: qdrantCollection,
@@ -298,7 +303,7 @@ async function ingestWorkflowUI() {
         message: 'Pilih metode memasukkan pengetahuan:',
         choices: [
             {
-                name: '📁 Dari File / Folder Dokumen (.md, .txt)',
+                name: '📁 Dari File / Folder Dokumen / Web URL (.md, .txt, http/https)',
                 value: 'file',
             },
             {
@@ -315,7 +320,7 @@ async function ingestWorkflowUI() {
         return;
     if (ingestType === 'file') {
         const docPath = await (0, prompts_1.input)({
-            message: 'Masukkan path file/folder dokumen (atau ketik "b" untuk batal):',
+            message: 'Masukkan path file/folder dokumen atau Web URL (atau ketik "b" untuk batal):',
             default: './docs',
         });
         if (docPath.trim().toLowerCase() === 'b' || docPath.trim().toLowerCase() === 'back')

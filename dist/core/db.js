@@ -61,7 +61,11 @@ async function getDb() {
 }
 async function getQdrantClient() {
     const config = await (0, config_js_1.loadConfig)();
-    const url = config.qdrantUrl || 'https://knowlage.jagoankode.site';
+    let rawUrl = (config.qdrantUrl || 'https://knowlage.jagoankode.site').trim();
+    if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+        rawUrl = `https://${rawUrl}`;
+    }
+    const url = rawUrl;
     const apiKey = config.qdrantApiKey || undefined;
     const collection = config.qdrantCollection || 'guidelines';
     if (!qdrantInstance) {
