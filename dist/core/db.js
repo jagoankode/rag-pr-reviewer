@@ -47,6 +47,7 @@ const lancedb = __importStar(require("@lancedb/lancedb"));
 const js_client_rest_1 = require("@qdrant/js-client-rest");
 const ai_1 = require("ai");
 const path_1 = __importDefault(require("path"));
+const chalk_1 = __importDefault(require("chalk"));
 const config_js_1 = require("./config.js");
 const local_embedder_js_1 = require("./local-embedder.js");
 const dedup_js_1 = require("./dedup.js");
@@ -104,7 +105,7 @@ async function getQdrantClient() {
     return { client: qdrantInstance, collection };
 }
 async function generateVectors(texts) {
-    const { client, config } = await (0, config_js_1.getActiveAIProvider)();
+    const { embeddingClient, config } = await (0, config_js_1.getActiveAIProvider)();
     const embModel = config.embeddingModel || 'text-embedding-3-small';
     if (config.provider === '9router' || embModel === 'local') {
         const vectorizer = (0, local_embedder_js_1.createTfIdfIndex)(texts);
@@ -112,7 +113,7 @@ async function generateVectors(texts) {
     }
     try {
         const { embeddings } = await (0, ai_1.embedMany)({
-            model: client.embedding(embModel),
+            model: embeddingClient.embedding(embModel),
             values: texts,
         });
         return embeddings;
@@ -284,16 +285,17 @@ async function searchRelevantGuidelines(query, limit = 5) {
                 return [];
             const corpus = points.points.map((p) => `${p.payload?.title}\n${p.payload?.content}`);
             let queryVector;
-            if (config.provider === '9router' || config.embeddingModel === 'local') {
+            const isLocalEmb = config.embeddingModel === 'local' || (!config.embeddingApiKey && config.provider === '9router');
+            if (isLocalEmb) {
                 const vectorizer = (0, local_embedder_js_1.createTfIdfIndex)(corpus);
                 queryVector = vectorizer(query.slice(0, 4000));
             }
             else {
-                const { client: aiClient } = await (0, config_js_1.getActiveAIProvider)();
+                const { embeddingClient } = await (0, config_js_1.getActiveAIProvider)();
                 const embModel = config.embeddingModel || 'text-embedding-3-small';
                 try {
                     const { embedding } = await (0, ai_1.embed)({
-                        model: aiClient.embedding(embModel),
+                        model: embeddingClient.embedding(embModel),
                         value: query.slice(0, 4000),
                     });
                     queryVector = embedding;
@@ -315,7 +317,8 @@ async function searchRelevantGuidelines(query, limit = 5) {
                 content: res.payload?.content || '',
             }));
         }
-        catch {
+        catch (err) {
+            console.error(chalk_1.default.red(`\n[Vector DB Search Error]: ${err.message || String(err)}`));
             return [];
         }
     }

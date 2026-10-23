@@ -3,6 +3,7 @@ import { QdrantClient } from '@qdrant/js-client-rest';
 import { embed, embedMany } from 'ai';
 import path from 'path';
 import os from 'os';
+import chalk from 'chalk';
 import { DocChunk } from './chunker.js';
 import { getActiveAIProvider, loadConfig, getConfigDir } from './config.js';
 import { createTfIdfIndex } from './local-embedder.js';
@@ -85,7 +86,7 @@ export async function getQdrantClient(): Promise<{ client: QdrantClient; collect
 }
 
 async function generateVectors(texts: string[]): Promise<number[][]> {
-  const { client, config } = await getActiveAIProvider();
+  const { embeddingClient, config } = await getActiveAIProvider();
   const embModel = config.embeddingModel || 'text-embedding-3-small';
 
   if (config.provider === '9router' || embModel === 'local') {
@@ -95,7 +96,7 @@ async function generateVectors(texts: string[]): Promise<number[][]> {
 
   try {
     const { embeddings } = await embedMany({
-      model: client.embedding(embModel),
+      model: embeddingClient.embedding(embModel),
       values: texts,
     });
     return embeddings;
@@ -308,15 +309,17 @@ export async function searchRelevantGuidelines(
       const corpus = points.points.map((p: any) => `${p.payload?.title}\n${p.payload?.content}`);
       let queryVector: number[];
 
-      if (config.provider === '9router' || config.embeddingModel === 'local') {
+      const isLocalEmb = config.embeddingModel === 'local' || (!config.embeddingApiKey && config.provider === '9router');
+
+      if (isLocalEmb) {
         const vectorizer = createTfIdfIndex(corpus);
         queryVector = vectorizer(query.slice(0, 4000));
       } else {
-        const { client: aiClient } = await getActiveAIProvider();
+        const { embeddingClient } = await getActiveAIProvider();
         const embModel = config.embeddingModel || 'text-embedding-3-small';
         try {
           const { embedding } = await embed({
-            model: aiClient.embedding(embModel),
+            model: embeddingClient.embedding(embModel),
             value: query.slice(0, 4000),
           });
           queryVector = embedding;
@@ -340,7 +343,8 @@ export async function searchRelevantGuidelines(
         title: res.payload?.title || 'Untitled',
         content: res.payload?.content || '',
       }));
-    } catch {
+    } catch (err: any) {
+      console.error(chalk.red(`\n[Vector DB Search Error]: ${err.message || String(err)}`));
       return [];
     }
   }

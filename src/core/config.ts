@@ -12,6 +12,8 @@ export interface AppConfig {
   defaultModel: string;
   savedModels?: string[];
   embeddingModel?: string;
+  embeddingApiKey?: string;
+  embeddingBaseUrl?: string;
   defaultReportDir?: string;
   // Konfigurasi Database (Local LanceDB vs Remote Qdrant VPS)
   dbType: DatabaseType;
@@ -103,8 +105,17 @@ export async function getActiveAIProvider() {
     baseURL: baseURL,
   });
 
+  const embeddingApiKey = config.embeddingApiKey || apiKey;
+  const embeddingBaseUrl = config.embeddingBaseUrl || baseURL;
+
+  const embeddingClient = createOpenAI({
+    apiKey: embeddingApiKey || 'ollama',
+    baseURL: embeddingBaseUrl,
+  });
+
   return {
     client,
+    embeddingClient,
     config,
     apiKey,
     baseURL,

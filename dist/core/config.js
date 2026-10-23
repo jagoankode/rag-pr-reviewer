@@ -85,8 +85,15 @@ async function getActiveAIProvider() {
         apiKey: apiKey || 'ollama',
         baseURL: baseURL,
     });
+    const embeddingApiKey = config.embeddingApiKey || apiKey;
+    const embeddingBaseUrl = config.embeddingBaseUrl || baseURL;
+    const embeddingClient = (0, openai_1.createOpenAI)({
+        apiKey: embeddingApiKey || 'ollama',
+        baseURL: embeddingBaseUrl,
+    });
     return {
         client,
+        embeddingClient,
         config,
         apiKey,
         baseURL,
