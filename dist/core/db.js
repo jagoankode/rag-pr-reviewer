@@ -37,6 +37,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getDb = getDb;
+exports.getVectorSize = getVectorSize;
 exports.getQdrantClient = getQdrantClient;
 exports.listAllIndexedGuidelines = listAllIndexedGuidelines;
 exports.insertChunks = insertChunks;
@@ -58,6 +59,16 @@ async function getDb() {
         dbInstance = await lancedb.connect(dbDir);
     }
     return dbInstance;
+}
+function getVectorSize(config) {
+    if (config.provider === '9router' || config.embeddingModel === 'local') {
+        return 256;
+    }
+    const model = (config.embeddingModel || '').toLowerCase();
+    if (model.includes('large') || model.includes('3072')) {
+        return 3072;
+    }
+    return 1536;
 }
 async function getQdrantClient() {
     const config = await (0, config_js_1.loadConfig)();
@@ -82,7 +93,7 @@ async function getQdrantClient() {
     const collections = await qdrantInstance.getCollections();
     const exists = collections.collections.some((c) => c.name === collection);
     if (!exists) {
-        const vectorSize = config.provider === '9router' || config.embeddingModel === 'local' ? 256 : 1536;
+        const vectorSize = getVectorSize(config);
         await qdrantInstance.createCollection(collection, {
             vectors: {
                 size: vectorSize,
@@ -106,9 +117,8 @@ async function generateVectors(texts) {
         });
         return embeddings;
     }
-    catch {
-        const vectorizer = (0, local_embedder_js_1.createTfIdfIndex)(texts);
-        return texts.map((t) => vectorizer(t));
+    catch (err) {
+        throw new Error(`Gagal memanggil API embedding (${embModel}): ${err.message || String(err)}.\nPeriksa endpoint Base URL, API Key, atau ganti embedding model ke "local" jika endpoint tidak mendukung embeddings.`);
     }
 }
 async function listAllIndexedGuidelines() {
@@ -288,9 +298,8 @@ async function searchRelevantGuidelines(query, limit = 5) {
                     });
                     queryVector = embedding;
                 }
-                catch {
-                    const vectorizer = (0, local_embedder_js_1.createTfIdfIndex)(corpus);
-                    queryVector = vectorizer(query.slice(0, 4000));
+                catch (err) {
+                    throw new Error(`Gagal memanggil API embedding query (${embModel}): ${err.message || String(err)}`);
                 }
             }
             const searchResults = await client.query(collection, {

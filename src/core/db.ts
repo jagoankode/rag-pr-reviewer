@@ -31,6 +31,17 @@ export async function getDb(): Promise<lancedb.Connection> {
   return dbInstance;
 }
 
+export function getVectorSize(config: { provider?: string; embeddingModel?: string }): number {
+  if (config.provider === '9router' || config.embeddingModel === 'local') {
+    return 256;
+  }
+  const model = (config.embeddingModel || '').toLowerCase();
+  if (model.includes('large') || model.includes('3072')) {
+    return 3072;
+  }
+  return 1536;
+}
+
 export async function getQdrantClient(): Promise<{ client: QdrantClient; collection: string }> {
   const config = await loadConfig();
   let rawUrl = (config.qdrantUrl || 'https://knowlage.jagoankode.site').trim();
@@ -57,7 +68,7 @@ export async function getQdrantClient(): Promise<{ client: QdrantClient; collect
   const collections = await qdrantInstance.getCollections();
   const exists = collections.collections.some((c) => c.name === collection);
   if (!exists) {
-    const vectorSize = config.provider === '9router' || config.embeddingModel === 'local' ? 256 : 1536;
+    const vectorSize = getVectorSize(config);
     await qdrantInstance.createCollection(collection, {
       vectors: {
         size: vectorSize,
@@ -84,9 +95,10 @@ async function generateVectors(texts: string[]): Promise<number[][]> {
       values: texts,
     });
     return embeddings;
-  } catch {
-    const vectorizer = createTfIdfIndex(texts);
-    return texts.map((t) => vectorizer(t));
+  } catch (err: any) {
+    throw new Error(
+      `Gagal memanggil API embedding (${embModel}): ${err.message || String(err)}.\nPeriksa endpoint Base URL, API Key, atau ganti embedding model ke "local" jika endpoint tidak mendukung embeddings.`
+    );
   }
 }
 
@@ -304,9 +316,10 @@ export async function searchRelevantGuidelines(
             value: query.slice(0, 4000),
           });
           queryVector = embedding;
-        } catch {
-          const vectorizer = createTfIdfIndex(corpus);
-          queryVector = vectorizer(query.slice(0, 4000));
+        } catch (err: any) {
+          throw new Error(
+            `Gagal memanggil API embedding query (${embModel}): ${err.message || String(err)}`
+          );
         }
       }
 

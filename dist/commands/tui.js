@@ -635,7 +635,10 @@ async function configureAIProviderUI(currentConfig) {
             message: 'Default Model:',
             default: currentConfig.defaultModel || 'gpt-4o',
         });
-        embeddingModel = 'local';
+        embeddingModel = await (0, nav_js_1.input)({
+            message: 'Embedding Model (contoh: text-embedding-3-large, text-embedding-3-small, atau "local"):',
+            default: currentConfig.embeddingModel || 'text-embedding-3-large',
+        });
     }
     if (provider !== 'ollama') {
         const enteredKey = await (0, nav_js_1.password)({
@@ -646,23 +649,17 @@ async function configureAIProviderUI(currentConfig) {
             apiKey = enteredKey;
         }
     }
-    const enteredDir = await (0, nav_js_1.input)({
-        message: 'Default folder simpan laporan review markdown:',
-        default: currentConfig.defaultReportDir || '.lumio-reviews',
-    });
-    if (enteredDir && enteredDir !== 'back') {
-        defaultReportDir = enteredDir;
-    }
     // REVIEW & EDIT CONFIRMATION LOOP (Anti-Typo Safeguard)
     while (true) {
         printHeader('Menu Utama > 🤖 Configure AI Provider > Konfirmasi');
         const maskedKey = apiKey ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : chalk_1.default.gray('(Tidak ada / kosong)');
         console.log(chalk_1.default.cyan('─── Ringkasan Konfigurasi AI (Cek Typo Sebelum Simpan) ───'));
-        console.log(`1. Provider      : ${chalk_1.default.bold.yellow(provider)}`);
-        console.log(`2. Base URL      : ${chalk_1.default.white(baseUrl || chalk_1.default.gray('(Default SDK)'))}`);
-        console.log(`3. Default Model : ${chalk_1.default.bold.green(defaultModel)}`);
-        console.log(`4. API Key       : ${chalk_1.default.white(maskedKey)}`);
-        console.log(`5. Report Dir    : ${chalk_1.default.white(defaultReportDir)}`);
+        console.log(`1. Provider        : ${chalk_1.default.bold.yellow(provider)}`);
+        console.log(`2. Base URL        : ${chalk_1.default.white(baseUrl || chalk_1.default.gray('(Default SDK)'))}`);
+        console.log(`3. Default Model   : ${chalk_1.default.bold.green(defaultModel)}`);
+        console.log(`4. Embedding Model : ${chalk_1.default.bold.magenta(embeddingModel || 'local')}`);
+        console.log(`5. API Key         : ${chalk_1.default.white(maskedKey)}`);
+        console.log(`6. Report Dir      : ${chalk_1.default.white(defaultReportDir)}`);
         console.log(chalk_1.default.cyan('──────────────────────────────────────────────────────────\n'));
         const reviewAction = await (0, nav_js_1.select)({
             message: 'Apakah konfigurasi di atas sudah sesuai?',
@@ -702,6 +699,7 @@ async function configureAIProviderUI(currentConfig) {
                 choices: [
                     { name: `🌐 Base URL [${baseUrl}]`, value: 'baseUrl' },
                     { name: `⚡ Default Model [${defaultModel}]`, value: 'model' },
+                    { name: `📐 Embedding Model [${embeddingModel}]`, value: 'embeddingModel' },
                     { name: `🔑 API Key`, value: 'apiKey' },
                     { name: `📁 Report Dir [${defaultReportDir}]`, value: 'reportDir' },
                     { name: '🔙 Selesai Edit (Kembali ke Ringkasan)', value: 'back' },
@@ -722,6 +720,14 @@ async function configureAIProviderUI(currentConfig) {
                 });
                 if (val && val !== 'back')
                     defaultModel = val.trim();
+            }
+            else if (fieldToEdit === 'embeddingModel') {
+                const val = await (0, nav_js_1.input)({
+                    message: 'Koreksi Embedding Model (contoh: text-embedding-3-large, text-embedding-3-small, local):',
+                    default: embeddingModel,
+                });
+                if (val && val !== 'back')
+                    embeddingModel = val.trim();
             }
             else if (fieldToEdit === 'apiKey') {
                 const val = await (0, nav_js_1.password)({
