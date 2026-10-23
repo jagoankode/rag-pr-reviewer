@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Matikan deprecation & schema warning internal AI SDK agar terminal tetap bersih
+process.env.AI_SDK_LOG_WARNINGS = 'false';
+
 import { Command } from 'commander';
 import chalk from 'chalk';
 import dotenv from 'dotenv';

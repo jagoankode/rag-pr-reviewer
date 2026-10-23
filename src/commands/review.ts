@@ -21,6 +21,63 @@ export interface ReviewOptions {
   outputDir?: string;
 }
 
+function extractReviewResult(rawText: string): FileReviewResult {
+  const text = (rawText || '').trim();
+
+  // 1. Coba parse langsung
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object') {
+      return {
+        violations: Array.isArray(parsed.violations) ? parsed.violations : [],
+        notes: Array.isArray(parsed.notes) ? parsed.notes : [],
+      };
+    }
+  } catch {}
+
+  // 2. Ekstrak dari blok markdown ```json ... ```
+  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlockMatch && codeBlockMatch[1]) {
+    try {
+      const parsed = JSON.parse(codeBlockMatch[1].trim());
+      if (parsed && typeof parsed === 'object') {
+        return {
+          violations: Array.isArray(parsed.violations) ? parsed.violations : [],
+          notes: Array.isArray(parsed.notes) ? parsed.notes : [],
+        };
+      }
+    } catch {}
+  }
+
+  // 3. Ambil substring antara kurung kurawal terluar { ... } (mengabaikan thinking process Claude)
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      const candidate = text.substring(firstBrace, lastBrace + 1);
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          violations: Array.isArray(parsed.violations) ? parsed.violations : [],
+          notes: Array.isArray(parsed.notes) ? parsed.notes : [],
+        };
+      }
+    } catch {}
+  }
+
+  // 4. Fallback toleran jika JSON terpotong sebagian di akhir
+  const violations: LineViolation[] = [];
+  const lineMatches = text.matchAll(/\{\s*"file"[^\}]+\}/g);
+  for (const m of lineMatches) {
+    try {
+      const v = JSON.parse(m[0]);
+      if (v.file && v.line) violations.push(v);
+    } catch {}
+  }
+
+  return { violations, notes: [] };
+}
+
 export async function reviewCommand(options: ReviewOptions): Promise<PRReviewResult | void> {
   const isRepo = await isGitRepo();
   if (!isRepo) {
@@ -127,14 +184,14 @@ ${fileDiff.annotatedText}
           });
           object = res.object;
         } catch (genErr: any) {
-          // Fallback jika model menghasilkan non-strict JSON atau output terpotong
+          // Model seperti Claude (ag/claude-sonnet-4-6) di proxy sering menyertakan thinking process/preamble
+          // Fallback menggunakan generateText + extractor multi-layer
           try {
             const rawTextRes = await generateText({
               model: client(modelName),
-              prompt: `${prompt}\n\nIMPORTANT: Return ONLY a valid JSON object matching this structure: {"violations": [], "notes": []}. No preamble or markdown fences.`,
+              prompt: `${prompt}\n\nIMPORTANT: Return ONLY a valid JSON object matching this structure: {"violations": [], "notes": []}. Do not output any thinking or conversational text.`,
             });
-            const cleaned = rawTextRes.text.replace(/```json/gi, '').replace(/```/g, '').trim();
-            object = JSON.parse(cleaned);
+            object = extractReviewResult(rawTextRes.text);
           } catch {
             throw genErr;
           }

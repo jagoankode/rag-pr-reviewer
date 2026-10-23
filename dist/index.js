@@ -4,6 +4,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+// Matikan deprecation & schema warning internal AI SDK agar terminal tetap bersih
+process.env.AI_SDK_LOG_WARNINGS = 'false';
 const commander_1 = require("commander");
 const chalk_1 = __importDefault(require("chalk"));
 const dotenv_1 = __importDefault(require("dotenv"));
