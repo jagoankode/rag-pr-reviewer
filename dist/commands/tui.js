@@ -11,6 +11,7 @@ const ingest_js_1 = require("./ingest.js");
 const review_js_1 = require("./review.js");
 const guidelines_js_1 = require("./guidelines.js");
 const learn_js_1 = require("./learn.js");
+const dialog_js_1 = require("./dialog.js");
 const git_js_1 = require("../core/git.js");
 const config_js_1 = require("../core/config.js");
 const history_js_1 = require("../core/history.js");
@@ -41,6 +42,10 @@ async function runInteractiveTUI() {
                     name: '🔍 Review Git Changes / PR Branch (Source vs Target)',
                     value: 'review',
                     disabled: !inRepo ? '(Bukan git repo)' : false,
+                },
+                {
+                    name: '💬 Chat / Dialog Interaktif RAG (Tanya Jawab & Diskusi Aturan)',
+                    value: 'dialog',
                 },
                 {
                     name: '🧠 Learn from Local Feature Code (Belajar dari Folder/Route Lokal)',
@@ -76,7 +81,10 @@ async function runInteractiveTUI() {
             console.log(chalk_1.default.gray('\nSampai jumpa, Bos! 👋\n'));
             process.exit(0);
         }
-        if (mainChoice === 'review') {
+        if (mainChoice === 'dialog') {
+            await (0, dialog_js_1.runInteractiveKnowledgeDialog)();
+        }
+        else if (mainChoice === 'review') {
             await reviewWorkflowUI(config);
         }
         else if (mainChoice === 'learn_code') {
@@ -230,7 +238,7 @@ async function ingestWorkflowUI() {
                 value: 'file',
             },
             {
-                name: '💬 Input Percakapan / Aturan Baru Secara Langsung (Interactive)',
+                name: '💬 Input Form Aturan Baru (Judul + Isi Text)',
                 value: 'interactive',
             },
             {

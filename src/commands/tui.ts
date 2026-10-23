@@ -5,6 +5,7 @@ import { ingestCommand, ingestDirectRuleCommand } from './ingest.js';
 import { reviewCommand } from './review.js';
 import { inspectGuidelinesCommand } from './guidelines.js';
 import { learnFeatureCommand } from './learn.js';
+import { runInteractiveKnowledgeDialog } from './dialog.js';
 import { isGitRepo, getAvailableBranches, getCurrentBranch } from '../core/git.js';
 import { loadConfig, saveConfig, AppConfig } from '../core/config.js';
 import { listSavedReports, resolveReportDir, deleteReportFile, clearAllReports } from '../core/history.js';
@@ -46,6 +47,10 @@ export async function runInteractiveTUI() {
           disabled: !inRepo ? '(Bukan git repo)' : false,
         },
         {
+          name: '💬 Chat / Dialog Interaktif RAG (Tanya Jawab & Diskusi Aturan)',
+          value: 'dialog',
+        },
+        {
           name: '🧠 Learn from Local Feature Code (Belajar dari Folder/Route Lokal)',
           value: 'learn_code',
         },
@@ -81,7 +86,9 @@ export async function runInteractiveTUI() {
       process.exit(0);
     }
 
-    if (mainChoice === 'review') {
+    if (mainChoice === 'dialog') {
+      await runInteractiveKnowledgeDialog();
+    } else if (mainChoice === 'review') {
       await reviewWorkflowUI(config);
     } else if (mainChoice === 'learn_code') {
       await learnWorkflowUI(config);
@@ -243,7 +250,7 @@ async function ingestWorkflowUI() {
         value: 'file',
       },
       {
-        name: '💬 Input Percakapan / Aturan Baru Secara Langsung (Interactive)',
+        name: '💬 Input Form Aturan Baru (Judul + Isi Text)',
         value: 'interactive',
       },
       {
