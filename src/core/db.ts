@@ -5,7 +5,7 @@ import os from 'os';
 import { DocChunk } from './chunker.js';
 import { getActiveAIProvider } from './config.js';
 import { createTfIdfIndex } from './local-embedder.js';
-import { getNormHash, cosineSimilarity } from './dedup.js';
+import { getNormHash } from './dedup.js';
 
 const DB_DIR = path.join(os.homedir(), '.pr-rag', 'db');
 const TABLE_NAME = 'guidelines';
@@ -15,7 +15,7 @@ export interface GuidelineRecord {
   source: string;
   title: string;
   content: string;
-  contentHash: string;
+  contentHash?: string;
   vector: number[];
   [key: string]: unknown;
 }
@@ -81,8 +81,8 @@ export interface InsertResult {
 }
 
 /**
- * Ingest chunk dokumen / knowledge ke LanceDB dengan DEDUP (anti duplikat):
- * Menolak aturan/pengetahuan yang sudah ada (berdasarkan exact hash atau semantic similarity > 0.95)
+ * Ingest chunk dokumen / knowledge ke LanceDB dengan DEDUP (anti duplikat)
+ * Mendukung backward-compatibility dengan table LanceDB yang lama (tidak crash jika schema lama belum ada contentHash).
  */
 export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
   if (chunks.length === 0) {
@@ -92,15 +92,24 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
   const db = await getDb();
   const tableNames = await db.tableNames();
   let existingRecords: any[] = [];
+  let tableHasContentHash = false;
 
   if (tableNames.includes(TABLE_NAME)) {
     const table = await db.openTable(TABLE_NAME);
     existingRecords = await table.query().toArray();
+    try {
+      const tblSchema = await table.schema();
+      tableHasContentHash = tblSchema.fields.some((f: any) => f.name === 'contentHash');
+    } catch {
+      tableHasContentHash = false;
+    }
   }
 
-  const existingHashes = new Set(existingRecords.map((r: any) => r.contentHash || getNormHash(r.content)));
+  // Hash matching untuk mencegah duplikasi
+  const existingHashes = new Set(
+    existingRecords.map((r: any) => r.contentHash || getNormHash(r.content))
+  );
 
-  // Filter 1: Cek duplikat teks persis (Normalized SHA-256 Hash)
   const uniqueChunks: DocChunk[] = [];
   const skippedTitles: string[] = [];
 
@@ -109,7 +118,7 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
     if (existingHashes.has(hash)) {
       skippedTitles.push(chunk.title);
     } else {
-      existingHashes.add(hash); // Hindari duplikat di dalam batch yang sama
+      existingHashes.add(hash);
       uniqueChunks.push(chunk);
     }
   }
@@ -126,14 +135,20 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
   const texts = uniqueChunks.map((c) => `${c.title}\n${c.content}`);
   const vectors = await generateVectors(texts);
 
-  const newRecords: GuidelineRecord[] = uniqueChunks.map((chunk, i) => ({
-    id: chunk.id,
-    source: chunk.source,
-    title: chunk.title,
-    content: chunk.content,
-    contentHash: getNormHash(chunk.content),
-    vector: vectors[i],
-  }));
+  const newRecords: GuidelineRecord[] = uniqueChunks.map((chunk, i) => {
+    const rec: GuidelineRecord = {
+      id: chunk.id,
+      source: chunk.source,
+      title: chunk.title,
+      content: chunk.content,
+      vector: vectors[i],
+    };
+    // Hanya tambahkan field contentHash jika tabel baru atau tabel lama sudah mendukung schema tersebut
+    if (!tableNames.includes(TABLE_NAME) || tableHasContentHash) {
+      rec.contentHash = getNormHash(chunk.content);
+    }
+    return rec;
+  });
 
   if (tableNames.includes(TABLE_NAME)) {
     const table = await db.openTable(TABLE_NAME);
