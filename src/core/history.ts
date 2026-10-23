@@ -13,7 +13,7 @@ export interface SaveReportOptions {
 }
 
 export function resolveReportDir(dirInput?: string): string {
-  let cleaned = (dirInput || '.rag-reviews').trim();
+  let cleaned = (dirInput || '.lumio-reviews').trim();
   if (cleaned.startsWith('~/') || cleaned === '~') {
     cleaned = path.join(os.homedir(), cleaned.slice(1));
   }
@@ -45,7 +45,7 @@ export function formatReportToMarkdown(
       ? '**REQUEST CHANGES**'
       : '**COMMENT**';
 
-  let md = `# Pull Request Review Report
+  let md = `# Lumio - Pull Request Review Report
 
 - **Date:** ${dateStr}
 - **Target:** ${targetLabel}
@@ -96,7 +96,7 @@ ${v.suggestedFix}
     });
   }
 
-  md += `\n\n*Generated locally with pr-rag (https://github.com/jagoankode/rag-pr-reviewer)*\n`;
+  md += `\n\n*Audited by Lumio (https://github.com/jagoankode/rag-pr-reviewer)*\n`;
   return md;
 }
 
@@ -121,7 +121,7 @@ export async function saveReviewReport(
   safeName = safeName.replace(/[^a-zA-Z0-9_-]/g, '_');
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const filename = `review-${safeName}-${timestamp}.md`;
+  const filename = `lumio-review-${safeName}-${timestamp}.md`;
   const fullPath = path.join(dir, filename);
 
   const markdownContent = formatReportToMarkdown(result, options);

@@ -9,7 +9,8 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${CYAN}═════════════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}    🧪 Installing / Updating pr-rag (Local RAG PR Reviewer)   ${NC}"
+echo -e "${CYAN}    ✨ Installing / Updating Lumio                          ${NC}"
+echo -e "${CYAN}    AI-Powered PR Reviewer & Centralized Knowledge Engine    ${NC}"
 echo -e "${CYAN}═════════════════════════════════════════════════════════════${NC}\n"
 
 # 1. Check Node.js
@@ -31,15 +32,22 @@ if ! command -v npm >/dev/null 2>&1; then
     exit 1
 fi
 
-PR_RAG_DIR="$HOME/.pr-rag"
-INSTALL_DIR="$PR_RAG_DIR/app"
+LUMIO_DIR="$HOME/.lumio"
+INSTALL_DIR="$LUMIO_DIR/app"
 BIN_DIR="$HOME/.local/bin"
-BIN_TARGET="$BIN_DIR/pr-rag"
+BIN_TARGET="$BIN_DIR/lumio"
+LEGACY_BIN_TARGET="$BIN_DIR/pr-rag"
 
-# PENTING: Folder data RAG (~/.pr-rag/db) dan config (~/.pr-rag/config.json)
-# berada di luar $INSTALL_DIR sehingga 100% aman dan tidak terhapus saat upgrade.
-echo -e "${YELLOW}1. Mengunduh & memperbarui aplikasi di ${INSTALL_DIR}...${NC}"
-mkdir -p "$PR_RAG_DIR"
+# Migrasi data config & database lama jika ada dari .pr-rag ke .lumio
+if [ -d "$HOME/.pr-rag" ] && [ ! -d "$LUMIO_DIR" ]; then
+    echo -e "${CYAN}Memindahkan data & konfigurasi dari ~/.pr-rag ke ~/.lumio...${NC}"
+    mkdir -p "$LUMIO_DIR"
+    cp -r "$HOME/.pr-rag/db" "$LUMIO_DIR/" 2>/dev/null || true
+    cp "$HOME/.pr-rag/config.json" "$LUMIO_DIR/" 2>/dev/null || true
+fi
+
+echo -e "${YELLOW}1. Mengunduh & memperbarui aplikasi Lumio...${NC}"
+mkdir -p "$LUMIO_DIR"
 mkdir -p "$BIN_DIR"
 
 TMP_DOWNLOAD=$(mktemp -d)
@@ -49,7 +57,7 @@ else
     curl -fsSL https://github.com/jagoankode/rag-pr-reviewer/archive/refs/heads/main.tar.gz | tar -xz -C "$TMP_DOWNLOAD" --strip-components=1
 fi
 
-# Pindahkan hanya dist, package.json, package-lock.json (BUANG src, .git, tsconfig agar source aman)
+# Pindahkan hanya dist dan package metadata (source code disembunyikan)
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cp -r "$TMP_DOWNLOAD/dist" "$INSTALL_DIR/"
@@ -65,8 +73,9 @@ echo -e "${YELLOW}2. Menginstall runtime dependencies lokal...${NC}"
     npm install --omit=dev --loglevel=error --no-audit --no-fund --registry=https://registry.npmjs.org
 )
 
-echo -e "${YELLOW}3. Menyiapkan executable binary di ${BIN_TARGET}...${NC}"
+echo -e "${YELLOW}3. Menyiapkan executable binary 'lumio' di ${BIN_TARGET}...${NC}"
 rm -f "$BIN_TARGET"
+rm -f "$LEGACY_BIN_TARGET"
 
 cat << 'EOF' > "$BIN_TARGET"
 #!/usr/bin/env bash
@@ -75,17 +84,20 @@ if [ -z "$NODE_EXEC" ]; then
     echo "Error: Node.js runtime not found." >&2
     exit 1
 fi
-exec "$NODE_EXEC" "$HOME/.pr-rag/app/dist/index.js" "$@"
+exec "$NODE_EXEC" "$HOME/.lumio/app/dist/index.js" "$@"
 EOF
 
 chmod +x "$BIN_TARGET"
+
+# Buat juga alias symlink pr-rag -> lumio untuk backward compatibility
+ln -sf "$BIN_TARGET" "$LEGACY_BIN_TARGET"
 
 # 4. Pastikan ~/.local/bin masuk ke shell config (.zshrc / .bashrc) jika belum ada
 detect_and_add_path() {
     local rc_file="$1"
     if [ -f "$rc_file" ]; then
         if ! grep -q '\.local/bin' "$rc_file"; then
-            echo -e "\n# Added by pr-rag installer\nexport PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$rc_file"
+            echo -e "\n# Added by Lumio installer\nexport PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$rc_file"
             echo -e "${CYAN}Menambahkan ~/.local/bin ke ${rc_file}${NC}"
         fi
     fi
@@ -94,9 +106,9 @@ detect_and_add_path() {
 detect_and_add_path "$HOME/.zshrc"
 detect_and_add_path "$HOME/.bashrc"
 
-echo -e "\n${GREEN}✔ Instalasi / Upgrade berhasil!${NC}"
-if [ -d "$PR_RAG_DIR/db" ]; then
-    echo -e "${GREEN}🔒 Data RAG Vector DB & Konfigurasi tetap aman dan terjaga.${NC}"
+echo -e "\n${GREEN}✔ Lumio berhasil terinstall!${NC}"
+if [ -d "$LUMIO_DIR/db" ]; then
+    echo -e "${GREEN}🔒 Data Database & Konfigurasi tetap aman dan terjaga.${NC}"
 fi
 echo -e "Binary terpasang di: ${CYAN}$BIN_TARGET${NC}"
-echo -e "Ketik ${GREEN}pr-rag${NC} di terminal untuk langsung membuka TUI.\n"
+echo -e "Ketik ${GREEN}lumio${NC} di terminal untuk langsung membuka TUI.\n"

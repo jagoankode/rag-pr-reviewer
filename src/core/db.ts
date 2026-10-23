@@ -4,11 +4,10 @@ import { embed, embedMany } from 'ai';
 import path from 'path';
 import os from 'os';
 import { DocChunk } from './chunker.js';
-import { getActiveAIProvider, loadConfig } from './config.js';
+import { getActiveAIProvider, loadConfig, getConfigDir } from './config.js';
 import { createTfIdfIndex } from './local-embedder.js';
 import { getNormHash } from './dedup.js';
 
-const DB_DIR = path.join(os.homedir(), '.pr-rag', 'db');
 const TABLE_NAME = 'guidelines';
 
 export interface GuidelineRecord {
@@ -26,7 +25,8 @@ let qdrantInstance: QdrantClient | null = null;
 
 export async function getDb(): Promise<lancedb.Connection> {
   if (!dbInstance) {
-    dbInstance = await lancedb.connect(DB_DIR);
+    const dbDir = path.join(getConfigDir(), 'db');
+    dbInstance = await lancedb.connect(dbDir);
   }
   return dbInstance;
 }
@@ -41,11 +41,9 @@ export async function getQdrantClient(): Promise<{ client: QdrantClient; collect
     qdrantInstance = new QdrantClient({ url, apiKey });
   }
 
-  // Pastikan koleksi ada di Qdrant
   const collections = await qdrantInstance.getCollections();
   const exists = collections.collections.some((c) => c.name === collection);
   if (!exists) {
-    // Default 256 dimensi untuk TF-IDF / local vectorizer atau 1536 untuk openai text-embedding-3-small
     const vectorSize = config.provider === '9router' || config.embeddingModel === 'local' ? 256 : 1536;
     await qdrantInstance.createCollection(collection, {
       vectors: {
@@ -58,9 +56,6 @@ export async function getQdrantClient(): Promise<{ client: QdrantClient; collect
   return { client: qdrantInstance, collection };
 }
 
-/**
- * Generate embeddings untuk array teks
- */
 async function generateVectors(texts: string[]): Promise<number[][]> {
   const { client, config } = await getActiveAIProvider();
   const embModel = config.embeddingModel || 'text-embedding-3-small';
@@ -88,9 +83,6 @@ export interface InsertResult {
   skippedTitles: string[];
 }
 
-/**
- * Mengambil semua daftar guidelines/aturan yang tersimpan (Local LanceDB atau VPS Qdrant)
- */
 export async function listAllIndexedGuidelines(): Promise<{ id: string; source: string; title: string; content: string }[]> {
   const config = await loadConfig();
 
@@ -112,7 +104,6 @@ export async function listAllIndexedGuidelines(): Promise<{ id: string; source: 
     }
   }
 
-  // Local LanceDB fallback
   const db = await getDb();
   const tableNames = await db.tableNames();
   if (!tableNames.includes(TABLE_NAME)) {
@@ -128,9 +119,6 @@ export async function listAllIndexedGuidelines(): Promise<{ id: string; source: 
   }));
 }
 
-/**
- * Ingest chunk dokumen / knowledge ke database (Local LanceDB atau Remote Qdrant VPS)
- */
 export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
   if (chunks.length === 0) {
     return { insertedCount: 0, duplicateCount: 0, skippedTitles: [] };
@@ -138,11 +126,9 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
 
   const config = await loadConfig();
 
-  // ROUTE 1: REMOTE QDRANT VPS
   if (config.dbType === 'qdrant') {
     const { client, collection } = await getQdrantClient();
 
-    // Ambil points eksisting untuk hash matching anti-duplikat
     const existingPoints = await client.scroll(collection, { limit: 1000, with_payload: true });
     const existingHashes = new Set(
       existingPoints.points.map((p: any) => p.payload?.contentHash || getNormHash(p.payload?.content || ''))
@@ -192,7 +178,6 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
     };
   }
 
-  // ROUTE 2: LOCAL LANCEDB
   const db = await getDb();
   const tableNames = await db.tableNames();
   let existingRecords: any[] = [];
@@ -265,9 +250,6 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
   };
 }
 
-/**
- * Ingest percakapan interaktif langsung sebagai knowledge
- */
 export async function ingestDirectKnowledge(
   title: string,
   content: string,
@@ -282,16 +264,12 @@ export async function ingestDirectKnowledge(
   return await insertChunks([chunk]);
 }
 
-/**
- * Mencari context guidelines yang paling relevan dengan query/diff (Local LanceDB atau Qdrant VPS)
- */
 export async function searchRelevantGuidelines(
   query: string,
   limit: number = 5
 ): Promise<DocChunk[]> {
   const config = await loadConfig();
 
-  // ROUTE 1: REMOTE QDRANT VPS
   if (config.dbType === 'qdrant') {
     try {
       const { client, collection } = await getQdrantClient();
@@ -336,7 +314,6 @@ export async function searchRelevantGuidelines(
     }
   }
 
-  // ROUTE 2: LOCAL LANCEDB
   const db = await getDb();
   const tableNames = await db.tableNames();
 

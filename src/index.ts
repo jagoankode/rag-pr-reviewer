@@ -12,9 +12,9 @@ dotenv.config();
 const program = new Command();
 
 program
-  .name('pr-rag')
-  .description(chalk.cyan('AI-powered local Pull Request reviewer using embedded RAG (LanceDB) & Line-by-Line Convention Audit'))
-  .version('1.6.0')
+  .name('lumio')
+  .description(chalk.cyan('✨ Lumio — AI-Powered PR Reviewer & Centralized Knowledge Engine'))
+  .version('2.0.0')
   .action(async () => {
     await runInteractiveTUI();
   });
@@ -36,7 +36,7 @@ program
 
 program
   .command('ingest')
-  .description('Ingest markdown guidelines/coding standards into local vector DB')
+  .description('Ingest markdown guidelines/coding standards into vector DB')
   .argument('<path>', 'Path to file or folder containing markdown guidelines')
   .action(async (pathArg) => {
     await ingestCommand(pathArg);
@@ -44,7 +44,7 @@ program
 
 program
   .command('review')
-  .description('Review git changes with RAG-enhanced AI and pinpoint exact line violations')
+  .description('Review git changes with AI and pinpoint exact line violations')
   .option('-s, --staged', 'Review only staged changes')
   .option('-b, --branch <branch>', 'Review diff against a specific git branch (legacy alias for --target)')
   .option('--source <branch>', 'Source / feature branch to review (e.g. feature-x or origin/feature-x)')
@@ -52,8 +52,8 @@ program
   .option('--fetch', 'Fetch remote branches before comparing (git fetch --all)')
   .option('-m, --model <model>', 'LLM model to use (default: config model or ag/gemini-3.8-flash)')
   .option('-l, --limit <number>', 'Number of relevant guidelines to retrieve', (val) => parseInt(val, 10), 7)
-  .option('--no-save', 'Disable saving review report to markdown in .rag-reviews/')
-  .option('--output-dir <path>', 'Custom directory to save markdown reports (default: .rag-reviews)')
+  .option('--no-save', 'Disable saving review report to markdown in .lumio-reviews/')
+  .option('--output-dir <path>', 'Custom directory to save markdown reports (default: .lumio-reviews)')
   .option('--json', 'Output review result as raw JSON')
   .action(async (options) => {
     await reviewCommand({

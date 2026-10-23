@@ -19,8 +19,12 @@ export interface AppConfig {
   qdrantCollection?: string;
 }
 
-const CONFIG_DIR = path.join(os.homedir(), '.pr-rag');
-const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+const PRIMARY_CONFIG_DIR = path.join(os.homedir(), '.lumio');
+const LEGACY_CONFIG_DIR = path.join(os.homedir(), '.pr-rag');
+
+export function getConfigDir(): string {
+  return PRIMARY_CONFIG_DIR;
+}
 
 const DEFAULT_CONFIG: AppConfig = {
   provider: 'openai',
@@ -28,7 +32,7 @@ const DEFAULT_CONFIG: AppConfig = {
   baseUrl: '',
   defaultModel: 'gpt-4o',
   embeddingModel: 'text-embedding-3-small',
-  defaultReportDir: '.rag-reviews',
+  defaultReportDir: '.lumio-reviews',
   dbType: 'local',
   qdrantUrl: 'https://knowlage.jagoankode.site',
   qdrantApiKey: '',
@@ -36,8 +40,23 @@ const DEFAULT_CONFIG: AppConfig = {
 };
 
 export async function loadConfig(): Promise<AppConfig> {
+  const primaryFile = path.join(PRIMARY_CONFIG_DIR, 'config.json');
+  const legacyFile = path.join(LEGACY_CONFIG_DIR, 'config.json');
+
+  let configFile = primaryFile;
   try {
-    const data = await fs.readFile(CONFIG_FILE, 'utf-8');
+    await fs.access(primaryFile);
+  } catch {
+    try {
+      await fs.access(legacyFile);
+      configFile = legacyFile;
+    } catch {
+      // Tidak ada file config
+    }
+  }
+
+  try {
+    const data = await fs.readFile(configFile, 'utf-8');
     const parsed = JSON.parse(data);
     return { ...DEFAULT_CONFIG, ...parsed };
   } catch {
@@ -52,8 +71,8 @@ export async function loadConfig(): Promise<AppConfig> {
 }
 
 export async function saveConfig(config: AppConfig): Promise<void> {
-  await fs.mkdir(CONFIG_DIR, { recursive: true });
-  await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+  await fs.mkdir(PRIMARY_CONFIG_DIR, { recursive: true });
+  await fs.writeFile(path.join(PRIMARY_CONFIG_DIR, 'config.json'), JSON.stringify(config, null, 2), 'utf-8');
 }
 
 /**
@@ -67,7 +86,7 @@ export async function getActiveAIProvider() {
 
   if (!apiKey && config.provider !== 'ollama') {
     throw new Error(
-      'API Key belum diset! Silakan konfigurasi via TUI (`pr-rag` -> "Configure AI Provider") atau set OPENAI_API_KEY di terminal.'
+      'API Key belum diset! Silakan konfigurasi via TUI (`lumio` -> "Configure AI Provider") atau set OPENAI_API_KEY di terminal.'
     );
   }
 

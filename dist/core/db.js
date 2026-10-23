@@ -46,17 +46,16 @@ const lancedb = __importStar(require("@lancedb/lancedb"));
 const js_client_rest_1 = require("@qdrant/js-client-rest");
 const ai_1 = require("ai");
 const path_1 = __importDefault(require("path"));
-const os_1 = __importDefault(require("os"));
 const config_js_1 = require("./config.js");
 const local_embedder_js_1 = require("./local-embedder.js");
 const dedup_js_1 = require("./dedup.js");
-const DB_DIR = path_1.default.join(os_1.default.homedir(), '.pr-rag', 'db');
 const TABLE_NAME = 'guidelines';
 let dbInstance = null;
 let qdrantInstance = null;
 async function getDb() {
     if (!dbInstance) {
-        dbInstance = await lancedb.connect(DB_DIR);
+        const dbDir = path_1.default.join((0, config_js_1.getConfigDir)(), 'db');
+        dbInstance = await lancedb.connect(dbDir);
     }
     return dbInstance;
 }
@@ -68,11 +67,9 @@ async function getQdrantClient() {
     if (!qdrantInstance) {
         qdrantInstance = new js_client_rest_1.QdrantClient({ url, apiKey });
     }
-    // Pastikan koleksi ada di Qdrant
     const collections = await qdrantInstance.getCollections();
     const exists = collections.collections.some((c) => c.name === collection);
     if (!exists) {
-        // Default 256 dimensi untuk TF-IDF / local vectorizer atau 1536 untuk openai text-embedding-3-small
         const vectorSize = config.provider === '9router' || config.embeddingModel === 'local' ? 256 : 1536;
         await qdrantInstance.createCollection(collection, {
             vectors: {
@@ -83,9 +80,6 @@ async function getQdrantClient() {
     }
     return { client: qdrantInstance, collection };
 }
-/**
- * Generate embeddings untuk array teks
- */
 async function generateVectors(texts) {
     const { client, config } = await (0, config_js_1.getActiveAIProvider)();
     const embModel = config.embeddingModel || 'text-embedding-3-small';
@@ -105,9 +99,6 @@ async function generateVectors(texts) {
         return texts.map((t) => vectorizer(t));
     }
 }
-/**
- * Mengambil semua daftar guidelines/aturan yang tersimpan (Local LanceDB atau VPS Qdrant)
- */
 async function listAllIndexedGuidelines() {
     const config = await (0, config_js_1.loadConfig)();
     if (config.dbType === 'qdrant') {
@@ -128,7 +119,6 @@ async function listAllIndexedGuidelines() {
             throw new Error(`Gagal membaca data dari Qdrant VPS: ${err.message}`);
         }
     }
-    // Local LanceDB fallback
     const db = await getDb();
     const tableNames = await db.tableNames();
     if (!tableNames.includes(TABLE_NAME)) {
@@ -143,18 +133,13 @@ async function listAllIndexedGuidelines() {
         content: r.content,
     }));
 }
-/**
- * Ingest chunk dokumen / knowledge ke database (Local LanceDB atau Remote Qdrant VPS)
- */
 async function insertChunks(chunks) {
     if (chunks.length === 0) {
         return { insertedCount: 0, duplicateCount: 0, skippedTitles: [] };
     }
     const config = await (0, config_js_1.loadConfig)();
-    // ROUTE 1: REMOTE QDRANT VPS
     if (config.dbType === 'qdrant') {
         const { client, collection } = await getQdrantClient();
-        // Ambil points eksisting untuk hash matching anti-duplikat
         const existingPoints = await client.scroll(collection, { limit: 1000, with_payload: true });
         const existingHashes = new Set(existingPoints.points.map((p) => p.payload?.contentHash || (0, dedup_js_1.getNormHash)(p.payload?.content || '')));
         const uniqueChunks = [];
@@ -195,7 +180,6 @@ async function insertChunks(chunks) {
             skippedTitles,
         };
     }
-    // ROUTE 2: LOCAL LANCEDB
     const db = await getDb();
     const tableNames = await db.tableNames();
     let existingRecords = [];
@@ -259,9 +243,6 @@ async function insertChunks(chunks) {
         skippedTitles,
     };
 }
-/**
- * Ingest percakapan interaktif langsung sebagai knowledge
- */
 async function ingestDirectKnowledge(title, content, source = 'interactive_conversation') {
     const chunk = {
         id: `direct_${Date.now()}`,
@@ -271,12 +252,8 @@ async function ingestDirectKnowledge(title, content, source = 'interactive_conve
     };
     return await insertChunks([chunk]);
 }
-/**
- * Mencari context guidelines yang paling relevan dengan query/diff (Local LanceDB atau Qdrant VPS)
- */
 async function searchRelevantGuidelines(query, limit = 5) {
     const config = await (0, config_js_1.loadConfig)();
-    // ROUTE 1: REMOTE QDRANT VPS
     if (config.dbType === 'qdrant') {
         try {
             const { client, collection } = await getQdrantClient();
@@ -320,7 +297,6 @@ async function searchRelevantGuidelines(query, limit = 5) {
             return [];
         }
     }
-    // ROUTE 2: LOCAL LANCEDB
     const db = await getDb();
     const tableNames = await db.tableNames();
     if (!tableNames.includes(TABLE_NAME)) {

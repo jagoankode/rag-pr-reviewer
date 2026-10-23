@@ -1,9 +1,10 @@
 {
-  "name": "rag-pr-reviewer",
-  "version": "1.9.0",
-  "description": "AI-powered local Pull Request reviewer using embedded RAG & line-by-line convention audit",
+  "name": "lumio",
+  "version": "2.0.0",
+  "description": "✨ Lumio — AI-Powered PR Reviewer & Centralized Knowledge Engine",
   "main": "dist/index.js",
   "bin": {
+    "lumio": "./dist/index.js",
     "pr-rag": "./dist/index.js"
   },
   "scripts": {
@@ -19,8 +20,10 @@
     "url": "git+https://github.com/jagoankode/rag-pr-reviewer.git"
   },
   "keywords": [
+    "lumio",
     "ai",
     "rag",
+    "qdrant",
     "pull-request",
     "code-review",
     "lancedb",
@@ -43,7 +46,7 @@
     "@ai-sdk/openai": "^4.0.100",
     "@inquirer/prompts": "^8.7.4",
     "@lancedb/lancedb": "^0.40.0",
-    "@qdrant/js-client-rest": "^1.20.0",
+    "@qdrant/js-client-rest": "^1.16.2",
     "ai": "^7.0.149",
     "boxen": "^9.0.0",
     "chalk": "^6.0.1",

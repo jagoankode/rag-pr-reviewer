@@ -18,7 +18,7 @@ const history_js_1 = require("../core/history.js");
 const fs_1 = require("fs");
 function printHeader(breadcrumb) {
     console.clear();
-    const banner = (0, boxen_1.default)(`${chalk_1.default.bold.cyan('🧪 RAG PR Reviewer')}\n${chalk_1.default.gray('Embedded Local AI Code Review & Convention Auditor')}\n\n${chalk_1.default.bold.yellow(`📍 ${breadcrumb}`)}`, {
+    const banner = (0, boxen_1.default)(`${chalk_1.default.bold.cyan('✨ Lumio')}\n${chalk_1.default.gray('AI-Powered PR Reviewer & Centralized Knowledge Engine')}\n\n${chalk_1.default.bold.yellow(`📍 ${breadcrumb}`)}`, {
         padding: 1,
         margin: { top: 0, bottom: 1, left: 1, right: 1 },
         borderStyle: 'round',
@@ -37,7 +37,7 @@ async function runInteractiveTUI() {
         }
         const dbBadge = config.dbType === 'qdrant'
             ? chalk_1.default.bold.green('🌐 VPS Qdrant (knowlage.jagoankode.site)')
-            : chalk_1.default.bold.blue('💻 Local LanceDB (~/.pr-rag/db)');
+            : chalk_1.default.bold.blue('💻 Local LanceDB (~/.lumio/db)');
         const mainChoice = await (0, prompts_1.select)({
             message: `Pilih aksi [DB Aktif: ${dbBadge}]:`,
             choices: [
@@ -107,7 +107,7 @@ async function runInteractiveTUI() {
             await configureDatabaseUI(config);
         }
         else if (mainChoice === 'history') {
-            await viewHistoryUI(config.defaultReportDir || '.rag-reviews');
+            await viewHistoryUI(config.defaultReportDir || '.lumio-reviews');
         }
         else if (mainChoice === 'config_ai') {
             await configureAIProviderUI(config);
@@ -130,7 +130,7 @@ async function configureDatabaseUI(currentConfig) {
             {
                 name: '💻 Local LanceDB (Personal / Offline Mode)',
                 value: 'local',
-                description: 'Menyimpan & menarik aturan secara lokal di disk laptop (~/.pr-rag/db)',
+                description: 'Menyimpan & menarik aturan secara lokal di disk laptop (~/.lumio/db)',
             },
             {
                 name: '🔙 Batalkan & Kembali ke Menu Utama',
@@ -237,8 +237,7 @@ async function reviewWorkflowUI(config) {
             return;
         sourceBranch = rawSource.trim();
     }
-    // Pilih folder report
-    const defaultDir = config.defaultReportDir || '.rag-reviews';
+    const defaultDir = config.defaultReportDir || '.lumio-reviews';
     const rawOutputDir = await (0, prompts_1.input)({
         message: 'Folder penyimpanan laporan Markdown review (atau "b" untuk batal):',
         default: defaultDir,
@@ -246,7 +245,6 @@ async function reviewWorkflowUI(config) {
     if (rawOutputDir.trim().toLowerCase() === 'b' || rawOutputDir.trim().toLowerCase() === 'back')
         return;
     const outputDir = rawOutputDir.trim();
-    // Model LLM selection
     const defaultModel = config.defaultModel || 'ag/gemini-3.8-flash';
     const model = await (0, prompts_1.select)({
         message: 'Pilih model LLM untuk review:',
@@ -341,7 +339,7 @@ async function ingestWorkflowUI() {
     }
     await pressEnterToContinue();
 }
-async function viewHistoryUI(defaultDir = '.rag-reviews') {
+async function viewHistoryUI(defaultDir = '.lumio-reviews') {
     printHeader('Menu Utama > 📜 Review History');
     const customDir = await (0, prompts_1.input)({
         message: 'Folder laporan markdown yang ingin dikelola (atau "b" untuk kembali):',
@@ -492,7 +490,7 @@ async function configureAIProviderUI(currentConfig) {
     }
     const defaultReportDir = await (0, prompts_1.input)({
         message: 'Default folder simpan laporan review markdown:',
-        default: currentConfig.defaultReportDir || '.rag-reviews',
+        default: currentConfig.defaultReportDir || '.lumio-reviews',
     });
     const newConfig = {
         ...currentConfig,
@@ -504,14 +502,15 @@ async function configureAIProviderUI(currentConfig) {
         defaultReportDir,
     };
     await (0, config_js_1.saveConfig)(newConfig);
-    console.log(chalk_1.default.green(`\n✔ Konfigurasi berhasil disimpan ke ~/.pr-rag/config.json!\n`));
+    console.log(chalk_1.default.green(`\n✔ Konfigurasi berhasil disimpan ke ~/.lumio/config.json!\n`));
     await pressEnterToContinue();
 }
 async function showStatusUI(inRepo, config) {
     printHeader('Menu Utama > ⚙️ System Status');
     const currentBranch = inRepo ? await (0, git_js_1.getCurrentBranch)() : '-';
-    const reportDir = (0, history_js_1.resolveReportDir)(config.defaultReportDir || '.rag-reviews');
+    const reportDir = (0, history_js_1.resolveReportDir)(config.defaultReportDir || '.lumio-reviews');
     console.log(chalk_1.default.cyan('─── Status Konfigurasi & Lingkungan ───'));
+    console.log(`Brand Engine     : ${chalk_1.default.bold.yellow('✨ Lumio v2.0.0')}`);
     console.log(`Git Repository   : ${inRepo ? chalk_1.default.green(`Aktif (Branch: ${currentBranch})`) : chalk_1.default.red('Tidak Terdeteksi')}`);
     console.log(`Database Mode    : ${config.dbType === 'qdrant' ? chalk_1.default.bold.green('🌐 Remote VPS Qdrant') : chalk_1.default.bold.blue('💻 Local LanceDB')}`);
     if (config.dbType === 'qdrant') {
@@ -519,7 +518,7 @@ async function showStatusUI(inRepo, config) {
         console.log(`Collection Name  : ${chalk_1.default.cyan(config.qdrantCollection || 'guidelines')}`);
     }
     else {
-        console.log(`Vector DB Path   : ${chalk_1.default.yellow('~/.pr-rag/db')}`);
+        console.log(`Vector DB Path   : ${chalk_1.default.yellow('~/.lumio/db')}`);
     }
     console.log(`Report Directory : ${chalk_1.default.yellow(reportDir)}`);
     console.log(`Active Provider  : ${chalk_1.default.bold.magenta(config.provider)}`);

@@ -13,7 +13,7 @@ const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
 function resolveReportDir(dirInput) {
-    let cleaned = (dirInput || '.rag-reviews').trim();
+    let cleaned = (dirInput || '.lumio-reviews').trim();
     if (cleaned.startsWith('~/') || cleaned === '~') {
         cleaned = path_1.default.join(os_1.default.homedir(), cleaned.slice(1));
     }
@@ -39,7 +39,7 @@ function formatReportToMarkdown(result, options = {}) {
         : result.status === 'REQUEST_CHANGES'
             ? '**REQUEST CHANGES**'
             : '**COMMENT**';
-    let md = `# Pull Request Review Report
+    let md = `# Lumio - Pull Request Review Report
 
 - **Date:** ${dateStr}
 - **Target:** ${targetLabel}
@@ -87,7 +87,7 @@ ${v.suggestedFix}
             md += `- ${note}\n`;
         });
     }
-    md += `\n\n*Generated locally with pr-rag (https://github.com/jagoankode/rag-pr-reviewer)*\n`;
+    md += `\n\n*Audited by Lumio (https://github.com/jagoankode/rag-pr-reviewer)*\n`;
     return md;
 }
 /**
@@ -108,7 +108,7 @@ async function saveReviewReport(result, options = {}) {
     }
     safeName = safeName.replace(/[^a-zA-Z0-9_-]/g, '_');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `review-${safeName}-${timestamp}.md`;
+    const filename = `lumio-review-${safeName}-${timestamp}.md`;
     const fullPath = path_1.default.join(dir, filename);
     const markdownContent = formatReportToMarkdown(result, options);
     await fs_1.promises.writeFile(fullPath, markdownContent, 'utf-8');

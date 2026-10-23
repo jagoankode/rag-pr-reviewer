@@ -14,8 +14,8 @@ import { promises as fs } from 'fs';
 function printHeader(breadcrumb: string) {
   console.clear();
   const banner = boxen(
-    `${chalk.bold.cyan('🧪 RAG PR Reviewer')}\n${chalk.gray(
-      'Embedded Local AI Code Review & Convention Auditor'
+    `${chalk.bold.cyan('✨ Lumio')}\n${chalk.gray(
+      'AI-Powered PR Reviewer & Centralized Knowledge Engine'
     )}\n\n${chalk.bold.yellow(`📍 ${breadcrumb}`)}`,
     {
       padding: 1,
@@ -41,7 +41,7 @@ export async function runInteractiveTUI() {
     const dbBadge =
       config.dbType === 'qdrant'
         ? chalk.bold.green('🌐 VPS Qdrant (knowlage.jagoankode.site)')
-        : chalk.bold.blue('💻 Local LanceDB (~/.pr-rag/db)');
+        : chalk.bold.blue('💻 Local LanceDB (~/.lumio/db)');
 
     const mainChoice = await select({
       message: `Pilih aksi [DB Aktif: ${dbBadge}]:`,
@@ -108,7 +108,7 @@ export async function runInteractiveTUI() {
     } else if (mainChoice === 'config_db') {
       await configureDatabaseUI(config);
     } else if (mainChoice === 'history') {
-      await viewHistoryUI(config.defaultReportDir || '.rag-reviews');
+      await viewHistoryUI(config.defaultReportDir || '.lumio-reviews');
     } else if (mainChoice === 'config_ai') {
       await configureAIProviderUI(config);
     } else if (mainChoice === 'status') {
@@ -131,7 +131,7 @@ async function configureDatabaseUI(currentConfig: AppConfig) {
       {
         name: '💻 Local LanceDB (Personal / Offline Mode)',
         value: 'local',
-        description: 'Menyimpan & menarik aturan secara lokal di disk laptop (~/.pr-rag/db)',
+        description: 'Menyimpan & menarik aturan secara lokal di disk laptop (~/.lumio/db)',
       },
       {
         name: '🔙 Batalkan & Kembali ke Menu Utama',
@@ -251,8 +251,7 @@ async function reviewWorkflowUI(config: AppConfig) {
     sourceBranch = rawSource.trim();
   }
 
-  // Pilih folder report
-  const defaultDir = config.defaultReportDir || '.rag-reviews';
+  const defaultDir = config.defaultReportDir || '.lumio-reviews';
   const rawOutputDir = await input({
     message: 'Folder penyimpanan laporan Markdown review (atau "b" untuk batal):',
     default: defaultDir,
@@ -260,7 +259,6 @@ async function reviewWorkflowUI(config: AppConfig) {
   if (rawOutputDir.trim().toLowerCase() === 'b' || rawOutputDir.trim().toLowerCase() === 'back') return;
   const outputDir = rawOutputDir.trim();
 
-  // Model LLM selection
   const defaultModel = config.defaultModel || 'ag/gemini-3.8-flash';
   const model = await select<string>({
     message: 'Pilih model LLM untuk review:',
@@ -365,7 +363,7 @@ async function ingestWorkflowUI() {
   await pressEnterToContinue();
 }
 
-async function viewHistoryUI(defaultDir: string = '.rag-reviews') {
+async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
   printHeader('Menu Utama > 📜 Review History');
 
   const customDir = await input({
@@ -527,7 +525,7 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
 
   const defaultReportDir = await input({
     message: 'Default folder simpan laporan review markdown:',
-    default: currentConfig.defaultReportDir || '.rag-reviews',
+    default: currentConfig.defaultReportDir || '.lumio-reviews',
   });
 
   const newConfig: AppConfig = {
@@ -541,23 +539,24 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
   };
 
   await saveConfig(newConfig);
-  console.log(chalk.green(`\n✔ Konfigurasi berhasil disimpan ke ~/.pr-rag/config.json!\n`));
+  console.log(chalk.green(`\n✔ Konfigurasi berhasil disimpan ke ~/.lumio/config.json!\n`));
   await pressEnterToContinue();
 }
 
 async function showStatusUI(inRepo: boolean, config: AppConfig) {
   printHeader('Menu Utama > ⚙️ System Status');
   const currentBranch = inRepo ? await getCurrentBranch() : '-';
-  const reportDir = resolveReportDir(config.defaultReportDir || '.rag-reviews');
+  const reportDir = resolveReportDir(config.defaultReportDir || '.lumio-reviews');
 
   console.log(chalk.cyan('─── Status Konfigurasi & Lingkungan ───'));
+  console.log(`Brand Engine     : ${chalk.bold.yellow('✨ Lumio v2.0.0')}`);
   console.log(`Git Repository   : ${inRepo ? chalk.green(`Aktif (Branch: ${currentBranch})`) : chalk.red('Tidak Terdeteksi')}`);
   console.log(`Database Mode    : ${config.dbType === 'qdrant' ? chalk.bold.green('🌐 Remote VPS Qdrant') : chalk.bold.blue('💻 Local LanceDB')}`);
   if (config.dbType === 'qdrant') {
     console.log(`Qdrant Server    : ${chalk.yellow(config.qdrantUrl || 'https://knowlage.jagoankode.site')}`);
     console.log(`Collection Name  : ${chalk.cyan(config.qdrantCollection || 'guidelines')}`);
   } else {
-    console.log(`Vector DB Path   : ${chalk.yellow('~/.pr-rag/db')}`);
+    console.log(`Vector DB Path   : ${chalk.yellow('~/.lumio/db')}`);
   }
   console.log(`Report Directory : ${chalk.yellow(reportDir)}`);
   console.log(`Active Provider  : ${chalk.bold.magenta(config.provider)}`);
