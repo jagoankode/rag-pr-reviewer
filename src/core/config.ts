@@ -36,9 +36,9 @@ const DEFAULT_CONFIG: AppConfig = {
   embeddingModel: 'text-embedding-3-small',
   defaultReportDir: '.lumio-reviews',
   dbType: 'local',
-  qdrantUrl: 'https://knowlage.jagoankode.site',
+  qdrantUrl: '',
   qdrantApiKey: '',
-  qdrantCollection: 'guidelines',
+  qdrantCollection: '',
 };
 
 export async function loadConfig(): Promise<AppConfig> {

@@ -72,13 +72,13 @@ function getVectorSize(config) {
 }
 async function getQdrantClient() {
     const config = await (0, config_js_1.loadConfig)();
-    let rawUrl = (config.qdrantUrl || 'https://knowlage.jagoankode.site').trim();
-    if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
-        rawUrl = `https://${rawUrl}`;
+    const rawUrl = (config.qdrantUrl || '').trim();
+    const collection = (config.qdrantCollection || '').trim();
+    if (!rawUrl || !collection) {
+        throw new Error('Qdrant URL dan Collection belum diset! Silakan konfigurasi via TUI (`lumio` -> "Database Storage Mode") sebelum menjalankan operasi database.');
     }
-    const url = rawUrl;
+    const url = rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : `https://${rawUrl}`;
     const apiKey = config.qdrantApiKey || undefined;
-    const collection = config.qdrantCollection || 'guidelines';
     if (!qdrantInstance) {
         const parsedUrl = new URL(url);
         const defaultPort = parsedUrl.protocol === 'https:' ? 443 : 80;

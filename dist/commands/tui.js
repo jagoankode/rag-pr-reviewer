@@ -38,7 +38,9 @@ async function runInteractiveTUI() {
             console.log(chalk_1.default.yellow('⚠️  Perhatian: Direktori saat ini bukan git repository. Opsi review dimatikan.\n'));
         }
         const dbBadge = config.dbType === 'qdrant'
-            ? chalk_1.default.bold.green('🌐 VPS Qdrant (knowlage.jagoankode.site)')
+            ? config.qdrantUrl && config.qdrantCollection
+                ? chalk_1.default.bold.green(`🌐 VPS Qdrant (${config.qdrantCollection})`)
+                : chalk_1.default.bold.yellow('⚠️ VPS Qdrant (Belum Dikonfigurasi)')
             : chalk_1.default.bold.blue('💻 Local LanceDB (~/.lumio/db)');
         const mainChoice = await (0, nav_js_1.select)({
             message: `Pilih aksi [DB Aktif: ${dbBadge}]:`,
@@ -128,9 +130,9 @@ async function runInteractiveTUI() {
 }
 async function configureDatabaseUI(currentConfig) {
     let selectedMode = currentConfig.dbType || 'qdrant';
-    let qdrantUrl = currentConfig.qdrantUrl || 'https://knowlage.jagoankode.site';
+    let qdrantUrl = currentConfig.qdrantUrl || '';
     let qdrantApiKey = currentConfig.qdrantApiKey || '';
-    let qdrantCollection = currentConfig.qdrantCollection || 'guidelines';
+    let qdrantCollection = currentConfig.qdrantCollection || '';
     printHeader('Menu Utama > 💾 Database Storage Mode');
     const chosenMode = await (0, nav_js_1.select)({
         message: 'Pilih lokasi Vector Database untuk Knowledge Base tim:',
@@ -758,8 +760,8 @@ async function showStatusUI(inRepo, config) {
     console.log(`Git Repository   : ${inRepo ? chalk_1.default.green(`Aktif (Branch: ${currentBranch})`) : chalk_1.default.red('Tidak Terdeteksi')}`);
     console.log(`Database Mode    : ${config.dbType === 'qdrant' ? chalk_1.default.bold.green('🌐 Remote VPS Qdrant') : chalk_1.default.bold.blue('💻 Local LanceDB')}`);
     if (config.dbType === 'qdrant') {
-        console.log(`Qdrant Server    : ${chalk_1.default.yellow(config.qdrantUrl || 'https://knowlage.jagoankode.site')}`);
-        console.log(`Collection Name  : ${chalk_1.default.cyan(config.qdrantCollection || 'guidelines')}`);
+        console.log(`Qdrant Server    : ${config.qdrantUrl ? chalk_1.default.yellow(config.qdrantUrl) : chalk_1.default.red('(Belum diset)')}`);
+        console.log(`Collection Name  : ${config.qdrantCollection ? chalk_1.default.cyan(config.qdrantCollection) : chalk_1.default.red('(Belum diset)')}`);
     }
     else {
         console.log(`Vector DB Path   : ${chalk_1.default.yellow('~/.lumio/db')}`);

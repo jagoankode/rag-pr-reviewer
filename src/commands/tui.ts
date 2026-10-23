@@ -42,7 +42,9 @@ export async function runInteractiveTUI() {
 
     const dbBadge =
       config.dbType === 'qdrant'
-        ? chalk.bold.green('🌐 VPS Qdrant (knowlage.jagoankode.site)')
+        ? config.qdrantUrl && config.qdrantCollection
+          ? chalk.bold.green(`🌐 VPS Qdrant (${config.qdrantCollection})`)
+          : chalk.bold.yellow('⚠️ VPS Qdrant (Belum Dikonfigurasi)')
         : chalk.bold.blue('💻 Local LanceDB (~/.lumio/db)');
 
     const mainChoice = await select({
@@ -127,9 +129,9 @@ export async function runInteractiveTUI() {
 
 async function configureDatabaseUI(currentConfig: AppConfig) {
   let selectedMode: DatabaseType | 'back' = currentConfig.dbType || 'qdrant';
-  let qdrantUrl = currentConfig.qdrantUrl || 'https://knowlage.jagoankode.site';
+  let qdrantUrl = currentConfig.qdrantUrl || '';
   let qdrantApiKey = currentConfig.qdrantApiKey || '';
-  let qdrantCollection = currentConfig.qdrantCollection || 'guidelines';
+  let qdrantCollection = currentConfig.qdrantCollection || '';
 
   printHeader('Menu Utama > 💾 Database Storage Mode');
 
@@ -807,8 +809,8 @@ async function showStatusUI(inRepo: boolean, config: AppConfig) {
   console.log(`Git Repository   : ${inRepo ? chalk.green(`Aktif (Branch: ${currentBranch})`) : chalk.red('Tidak Terdeteksi')}`);
   console.log(`Database Mode    : ${config.dbType === 'qdrant' ? chalk.bold.green('🌐 Remote VPS Qdrant') : chalk.bold.blue('💻 Local LanceDB')}`);
   if (config.dbType === 'qdrant') {
-    console.log(`Qdrant Server    : ${chalk.yellow(config.qdrantUrl || 'https://knowlage.jagoankode.site')}`);
-    console.log(`Collection Name  : ${chalk.cyan(config.qdrantCollection || 'guidelines')}`);
+    console.log(`Qdrant Server    : ${config.qdrantUrl ? chalk.yellow(config.qdrantUrl) : chalk.red('(Belum diset)')}`);
+    console.log(`Collection Name  : ${config.qdrantCollection ? chalk.cyan(config.qdrantCollection) : chalk.red('(Belum diset)')}`);
   } else {
     console.log(`Vector DB Path   : ${chalk.yellow('~/.lumio/db')}`);
   }

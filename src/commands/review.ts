@@ -1,5 +1,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
+import path from 'path';
+import fs from 'fs';
 import { isGitRepo, getGitDiff } from '../core/git.js';
 import { parseAnnotatedDiffFiles } from '../core/diff-parser.js';
 import { searchRelevantGuidelines } from '../core/db.js';
@@ -154,41 +156,101 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
       const fileDiff = fileDiffs[i];
       const progressLabel = `[${i + 1}/${totalFiles}]`;
       const fileSpinner = ora(
-        chalk.magenta(`${progressLabel} Menganalisis ${chalk.bold.underline(fileDiff.file)} (${fileDiff.addedLinesCount} baris)... (Ctrl+C: Batal)`)
+        chalk.magenta(`${progressLabel} Menganalisis ${chalk.bold.underline(fileDiff.file)} (${fileDiff.addedLinesCount} baris diff)... (Ctrl+C: Batal)`)
       ).start();
 
       try {
-        // Cari RAG guideline yang spesifik untuk file/diff ini
-        let relevantRules: string[] = [];
-        try {
-          const chunks = await searchRelevantGuidelines(`${fileDiff.file}\n${fileDiff.annotatedText}`, options.limit || 5);
-          relevantRules = chunks.map((c) => `[Rule Title: ${c.title}]\n${c.content}`);
-        } catch {
-          // fallback jika db kosong
+        // 1. Baca seluruh baris fisik file lokal (All-Line Code Awareness)
+        const fullFilePath = path.resolve(process.cwd(), fileDiff.file);
+        let allFileLinesText = '';
+        if (fs.existsSync(fullFilePath)) {
+          try {
+            const rawContent = fs.readFileSync(fullFilePath, 'utf-8');
+            const lines = rawContent.split('\n');
+            allFileLinesText = lines.map((line, idx) => `L${idx + 1}: ${line}`).join('\n');
+          } catch {}
         }
 
-        // STRICT GROUNDING: Jika tidak ada rule sama sekali di RAG/Qdrant, JANGAN izinkan AI berasumsi!
+        // 2. Baca konteks folder dan struktur modul (Folder & Scaffold Awareness)
+        const folderDir = path.dirname(fullFilePath);
+        const folderRelative = path.relative(process.cwd(), folderDir) || '.';
+        let folderFilesList: string[] = [];
+        if (fs.existsSync(folderDir)) {
+          try {
+            folderFilesList = fs.readdirSync(folderDir).filter((f) => !f.startsWith('.'));
+          } catch {}
+        }
+
+        // 3. Cari RAG guideline yang relevan dari Vector DB (RAG)
+        let relevantRules: string[] = [];
+        try {
+          // Cari aturan terkait kode diff & file
+          const codeQuery = `File: ${fileDiff.file}\n${fileDiff.annotatedText}`;
+          // Cari juga aturan terkait arsitektur modul & scaffold folder
+          const scaffoldQuery = `Module structure scaffold required files for ${folderRelative} folder with files: ${folderFilesList.join(', ')}`;
+          
+          const [codeChunks, scaffoldChunks] = await Promise.all([
+            searchRelevantGuidelines(codeQuery, 5),
+            searchRelevantGuidelines(scaffoldQuery, 3),
+          ]);
+
+          const seen = new Set<string>();
+          for (const c of [...codeChunks, ...scaffoldChunks]) {
+            if (!seen.has(c.id)) {
+              seen.add(c.id);
+              relevantRules.push(`[Rule Title: ${c.title}]\n${c.content}`);
+            }
+          }
+        } catch {
+          // fallback jika db kosong / error
+        }
+
+        // STRICT GROUNDING: Jika tidak ada rule sama sekali di Vector DB, JANGAN izinkan AI berasumsi!
         if (relevantRules.length === 0) {
           fileSpinner.succeed(chalk.gray(`${progressLabel} ${fileDiff.file} ➔ Bersih (Tidak ada aturan terkait di Vector DB)`));
           continue;
         }
 
         const prompt = `You are a strict Code Convention Auditor.
-Your ONLY job is to verify if this code violates the EXPLICIT registered conventions provided below.
+Your ONLY job is to verify if this code and its module folder violate the EXPLICIT registered conventions provided below.
 
-### REGISTERED TEAM CONVENTIONS (EXACT TRUTH):
+### REGISTERED TEAM CONVENTIONS (EXACT TRUTH FROM VECTOR DB):
 ${relevantRules.join('\n\n---\n\n')}
+
+### MODULE CONTEXT & SURROUNDING FOLDER:
+- File Under Review: ${fileDiff.file}
+- Containing Folder: ${folderRelative}
+- Files Present in this Folder: [${folderFilesList.join(', ')}]
+
+### COMPLETE FILE CONTENT WITH PHYSICAL LINE NUMBERS:
+${allFileLinesText || fileDiff.annotatedText}
+
+### RECENT GIT CHANGES (DIFF):
+${fileDiff.annotatedText}
 
 ### STRICT AUDIT RULES:
 1. ZERO ASSUMPTIONS: You must ONLY flag violations against the exact rules listed in "REGISTERED TEAM CONVENTIONS" above.
 2. DO NOT use generic best practices, personal styling preferences, clean architecture opinions, or external internet standards.
-3. If an added line does NOT directly violate any rule in the REGISTERED TEAM CONVENTIONS above, it is 100% VALID. Return empty violations array [].
-4. Every violation MUST cite the exact [Rule Title] from the registered conventions as its "rule" property.
-5. Only inspect newly added/modified lines marked with \`+ L<number>:\`.
-6. SuggestedFix must be a replacement string snippet or null if not applicable.
+3. SCAFFOLD & MODULE AUDIT: Use the "MODULE CONTEXT & SURROUNDING FOLDER" to verify if required files (e.g., wrapper, container, component, hook, index.ts, test files) are present or missing according to registered conventions. If required files are missing in this folder according to the registered convention, flag it on line 1 of the file under review.
+4. WHOLE FILE AUDIT: Inspect all lines of the file that was modified. If any line violates registered conventions (e.g., styling, forbidden types, misplaced hooks, missing JSDoc, double fallback, naming), report the exact line number \`L<number>\`.
+5. Every violation MUST cite the exact [Rule Title] from the registered conventions as its "rule" property.
+6. If the file and its folder adhere to all registered conventions, return empty violations array [].
+7. SuggestedFix must be an actionable replacement code snippet or null if not applicable.
 
-### File Diff to Audit:
-${fileDiff.annotatedText}
+Return strictly a JSON object with this shape:
+{
+  "violations": [
+    {
+      "file": "${fileDiff.file}",
+      "line": 1,
+      "rule": "[Exact Rule Title from Registered Conventions]",
+      "severity": "error",
+      "comment": "Clear explanation referencing the rule",
+      "suggestedFix": null
+    }
+  ],
+  "notes": []
+}
 `;
 
         let object: FileReviewResult | null = null;

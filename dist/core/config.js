@@ -25,9 +25,9 @@ const DEFAULT_CONFIG = {
     embeddingModel: 'text-embedding-3-small',
     defaultReportDir: '.lumio-reviews',
     dbType: 'local',
-    qdrantUrl: 'https://knowlage.jagoankode.site',
+    qdrantUrl: '',
     qdrantApiKey: '',
-    qdrantCollection: 'guidelines',
+    qdrantCollection: '',
 };
 async function loadConfig() {
     const primaryFile = path_1.default.join(PRIMARY_CONFIG_DIR, 'config.json');
