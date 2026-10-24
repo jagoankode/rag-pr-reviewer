@@ -8,12 +8,14 @@ Lumio menerangi setiap celah kode Anda sebelum merge. Memadukan **Embedded Local
 
 ## 🌟 Mengapa Lumio?
 
-- **✨ Branding Elegan & Modern**: Perintah CLI yang estetik dan intuitif (`lumio`).
-- **🛡️ Single Source of Truth**: Sinkronisasi aturan tim secara real-time via Qdrant VPS (`knowlage.jagoankode.site`), atau gunakan mode lokal offline (`~/.lumio/db`).
-- **📍 Audit Baris-demi-Baris**: Menemukan pelanggaran kode presisi per file dan nomor baris (`payment.ts:20`) dengan actionable code fix.
-- **💬 Dialog 2-Arah Berdasar Data**: Ngobrol dan berdiskusi dengan AI yang memiliki *strict grounding* (hanya menjawab dari aturan tim).
-- **🧠 Codebase Reverse Engineering**: Pelajari pola arsitektur hulu-ke-hilir dari folder fitur lokal Anda secara otomatis.
-- **🔒 Aman & Tertutup**: Source code backend diproteksi, hasil review berupa 100% Pure Markdown tanpa tag HTML.
+- **✨ UI/UX Minimalist & Estetik**: Tampilan terminal modern bergaya OpenCode dengan single-line status chip, badge context aktif, dan navigasi keyboard terstandarisasi (`esc back • ↑↓ navigate • ⏎ select`).
+- **🌐 Bilingual Support (i18n)**: Mendukung penuh Bahasa Indonesia (`id`) dan English (`en`) yang dapat diganti kapan saja via menu Pengaturan.
+- **🛡️ 2-Tier Auto-Patch & Zero-Embedding for Members**: Anggota tim hanya butuh credential LLM chat biasa. Knowledge rules otomatis tersinkronisasi dan di-cache lokal dengan deterministic vectorizer tanpa perlu biaya/kuota API embedding.
+- **🤖 Multi-Provider & Dynamic Model Mapping**: Dukungan multi-profile untuk 9router, OpenAI Official, OpenRouter, Ollama, dan Custom Provider (Sumopod, LiteLLM, Groq, dll.) dengan auto-switching Base URL dan API Key per model.
+- **📍 Audit Baris-demi-Baris**: Menemukan pelanggaran kode presisi per file dan nomor baris (`payment.ts:20`) lengkap dengan actionable code fix.
+- **💬 Dialog Tanya-Jawab RAG**: Mode obrolan interaktif 2-arah yang *strict grounded* (hanya menjawab dari aturan tim tanpa halusinasi).
+- **🧠 Codebase Reverse Engineering**: Pelajari pola arsitektur hulu-ke-hilir dari folder fitur lokal Anda secara otomatis (`lumio learn`).
+- **🛑 Zero-Hang & Abort-Ready**: Seluruh proses async dilindungi timeout safeguard, deterministic TF-IDF fallback, dan `AbortController` (aman dibatalkan via Ctrl+C / Esc kapan saja).
 
 ---
 
@@ -25,12 +27,12 @@ Jalankan perintah ini di terminal (Linux, macOS, WSL):
 curl -fsSL https://raw.githubusercontent.com/jagoankode/rag-pr-reviewer/main/install.sh | bash
 ```
 
-Setelah instalasi selesai, cukup ketik:
+Setelah instalasi selesai, jalankan:
 ```bash
 lumio
 ```
 
-*Untuk uninstall kapan saja:*
+*Untuk uninstall:*
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jagoankode/rag-pr-reviewer/main/uninstall.sh | bash
 ```
@@ -39,17 +41,26 @@ curl -fsSL https://raw.githubusercontent.com/jagoankode/rag-pr-reviewer/main/uni
 
 ## 🚀 Panduan Penggunaan
 
-### 1. Mode Interaktif TUI (Direkomendasikan)
+### 1. Terminal User Interface (TUI Mode)
 Cukup ketik `lumio` dari repositori git mana pun:
 ```bash
 lumio
 ```
-Navigasi menu menggunakan tombol panah atas/bawah:
-- **🔍 Review Git Changes**: Review perubahan lokal, staged, atau bandingkan branch PR (`origin/main <- origin/feature`).
-- **💬 Chat / Dialog Interaktif RAG**: Tanya jawab mengenai aturan tim atau tambahkan aturan baru lewat chat.
-- **🧠 Learn from Local Feature Code**: Arahkan ke folder fitur lokal untuk mengekstrak konvensi otomatis.
-- **💾 Database Storage Mode**: Pilih antara **🌐 Remote VPS Qdrant** (`knowlage.jagoankode.site`) atau **💻 Local LanceDB**.
-- **🤖 Configure AI Provider**: Konfigurasi 9router, OpenAI, OpenRouter, atau Ollama.
+
+Menu dikelompokkan secara rapi dan modular:
+- **🔍 Review Changes**: Review uncommitted changes, staged changes, atau bandingkan cabang PR (`origin/main ⟵ origin/feature`).
+- **📚 Knowledge Base**:
+  - `💬 Tanya Jawab Aturan (Chat Dialog)`: Diskusi interaktif tanya aturan coding tim.
+  - `📖 Inspect Active Rules`: Cek seluruh aturan aktif yang tersimpan di Vector DB.
+  - `🧠 Learn Feature Code`: Bedah source code folder fitur untuk ekstraksi konvensi baru.
+  - `📥 Ingest Knowledge Baru`: Tambah dokumen (.md, .txt, URL) atau via form manual.
+- **⚡ Ganti Model Cepat**: Switch model aktif dengan auto-sync provider profile.
+- **🤖 Configure AI Provider**: Kelola profil AI provider, Base URL, dan API Key.
+- **📜 Review History**: Buka, baca kembali, atau kelola laporan audit PR yang tersimpan.
+- **⚙️ Pengaturan (Settings)**:
+  - `📊 Status Configuration`: Ringkasan status sistem, branch git, dan environment.
+  - `🌐 Language / Bahasa`: Switch bahasa tampilan antara ID dan EN.
+  - `💾 Database Storage Mode`: Beralih antara **🌐 Remote VPS Qdrant** atau **💻 Local LanceDB**.
 
 ---
 
@@ -70,6 +81,25 @@ lumio learn ./src/features/payment
 
 # Ingest dokumen panduan markdown
 lumio ingest ./docs/coding-standards.md
+
+# Buka riwayat review
+lumio history
+
+# Paksa sinkronisasi rules dari Qdrant VPS
+lumio sync
+
+# Periksa dan upgrade Lumio ke versi rilis terbaru
+lumio upgrade
+```
+
+---
+
+## 🧪 Testing
+
+Proyek ini dilengkapi native unit test runner:
+
+```bash
+npm test
 ```
 
 ---
