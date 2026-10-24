@@ -1,4 +1,4 @@
-import { AppConfig, loadConfig } from './config.js';
+import { AppConfig, loadConfig, resolveProviderForModel } from './config.js';
 
 /**
  * Universal LLM caller yang kebal terhadap semua jenis proxy (9router, LiteLLM, dsb.)
@@ -8,10 +8,12 @@ import { AppConfig, loadConfig } from './config.js';
  */
 export async function callLLM(prompt: string, modelOverride?: string, signal?: AbortSignal): Promise<string> {
   const config = await loadConfig();
-  const apiKey = process.env.OPENAI_API_KEY || config.apiKey;
-  const rawBaseUrl = process.env.OPENAI_BASE_URL || config.baseUrl || 'https://api.openai.com/v1';
+  const resolved = resolveProviderForModel(config, modelOverride);
+  
+  const apiKey = process.env.OPENAI_API_KEY || resolved.apiKey;
+  const rawBaseUrl = process.env.OPENAI_BASE_URL || resolved.baseUrl || 'https://api.openai.com/v1';
   const baseUrl = rawBaseUrl.replace(/\/+$/, '');
-  const model = modelOverride || config.defaultModel || 'ag/gemini-3.8-flash';
+  const model = resolved.model;
 
   const url = `${baseUrl}/chat/completions`;
 

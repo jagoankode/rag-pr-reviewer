@@ -7,7 +7,7 @@ import { inspectGuidelinesCommand } from './guidelines.js';
 import { learnFeatureCommand } from './learn.js';
 import { runInteractiveKnowledgeDialog } from './dialog.js';
 import { isGitRepo, getAvailableBranches, getCurrentBranch } from '../core/git.js';
-import { loadConfig, saveConfig, AppConfig, DatabaseType } from '../core/config.js';
+import { loadConfig, saveConfig, AppConfig, DatabaseType, ProviderProfile, resolveProviderForModel } from '../core/config.js';
 import { listSavedReports, resolveReportDir, deleteReportFile, clearAllReports } from '../core/history.js';
 import { getAppVersion } from '../core/version.js';
 import { promises as fs } from 'fs';
@@ -80,7 +80,7 @@ export async function runInteractiveTUI() {
           value: 'history',
         },
         {
-          name: `⚡ Ganti Model Cepat (${chalk.green(config.defaultModel)})`,
+          name: `⚡ Ganti Model Cepat (${chalk.green(config.defaultModel)} - ${chalk.yellow(config.provider)})`,
           value: 'quick_switch_model',
         },
         {
@@ -517,16 +517,22 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
   }
 
   while (true) {
+    const resolvedActive = resolveProviderForModel(currentConfig, activeModel);
     printHeader('Menu Utama > ⚡ Ganti Model Cepat');
 
-    console.log(chalk.cyan(`Provider Aktif : ${chalk.bold.yellow(currentConfig.provider)}`));
-    console.log(chalk.cyan(`Model Aktif    : ${chalk.bold.green(activeModel)}\n`));
+    console.log(chalk.cyan(`Provider Aktif : ${chalk.bold.yellow(resolvedActive.providerId)}`));
+    console.log(chalk.cyan(`Model Aktif    : ${chalk.bold.green(activeModel)}`));
+    console.log(chalk.gray(`Base URL       : ${resolvedActive.baseUrl || '(Default)'}\n`));
 
     const choices = [
-      ...savedModels.map((m) => ({
-        name: m === activeModel ? `🟢 ${m} (Sedang Aktif)` : `⚪ ${m}`,
-        value: `select:${m}`,
-      })),
+      ...savedModels.map((m) => {
+        const info = resolveProviderForModel(currentConfig, m);
+        const provBadge = chalk.gray(`[${info.providerId}]`);
+        return {
+          name: m === activeModel ? `🟢 ${m} ${provBadge} (Sedang Aktif)` : `⚪ ${m} ${provBadge}`,
+          value: `select:${m}`,
+        };
+      }),
       { name: '➕ Tambah Model Baru ke Daftar', value: 'add' },
       { name: '🗑️  Hapus Model dari Daftar', value: 'delete' },
       { name: '🔙 Kembali ke Menu Utama', value: 'back' },
@@ -544,36 +550,109 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
     if (action.startsWith('select:')) {
       const chosen = action.replace('select:', '');
       activeModel = chosen;
+      const targetResolved = resolveProviderForModel(currentConfig, activeModel);
+
+      // Otomatis sinkronkan provider aktif & baseUrl ke config provider model tersebut
       const updatedConfig: AppConfig = {
         ...currentConfig,
         defaultModel: activeModel,
+        provider: targetResolved.providerId,
+        baseUrl: targetResolved.baseUrl,
+        apiKey: targetResolved.apiKey,
         savedModels,
       };
       await saveConfig(updatedConfig);
-      console.log(chalk.green(`\n✔ Model aktif berhasil diganti ke: ${chalk.bold(activeModel)}\n`));
+      console.log(chalk.green(`\n✔ Model aktif berhasil diganti ke: ${chalk.bold(activeModel)}`));
+      console.log(chalk.cyan(`✔ Provider aktif otomatis berganti ke: ${chalk.bold.yellow(targetResolved.providerId)}\n`));
       await pressEnterToContinue();
       return;
     }
 
     if (action === 'add') {
       const newModelName = await input({
-        message: 'Masukkan nama model baru (contoh: ag/claude-sonnet-4-6, deepseek/deepseek-r1):',
+        message: 'Masukkan nama model baru (contoh: ag/claude-sonnet-4-6, deepseek-r1):',
         validate: (v) => (v.trim().length > 0 ? true : 'Nama model tidak boleh kosong'),
       });
 
       if (newModelName && newModelName !== 'back') {
         const trimmed = newModelName.trim();
+
+        // Tanyakan model ini milik provider mana
+        const knownProviders = Object.keys(currentConfig.providers || { '9router': 1, 'openai': 1 });
+        const providerChoices = [
+          ...knownProviders.map((p) => {
+            const prof = currentConfig.providers?.[p];
+            return {
+              name: `📦 ${prof?.name || p} (${p})`,
+              value: p,
+            };
+          }),
+          { name: '➕ Hubungkan ke Custom Provider Baru...', value: 'new_custom' },
+        ];
+
+        let targetProvider = await select({
+          message: `Model "${trimmed}" ini disediakan oleh provider mana?`,
+          choices: providerChoices,
+        });
+
+        const providersMap = { ...(currentConfig.providers || {}) };
+
+        if (targetProvider === 'new_custom') {
+          const customName = await input({
+            message: 'Nama identifier custom provider (contoh: groq, vllm-local, together):',
+            validate: (v) => (v.trim().length > 0 ? true : 'Nama provider tidak boleh kosong'),
+          });
+          const customId = customName.trim().toLowerCase().replace(/\s+/g, '-');
+          const customBaseUrl = await input({
+            message: 'Base URL provider ini (contoh: https://api.groq.com/openai/v1):',
+            validate: (v) => (v.trim().length > 0 ? true : 'Base URL tidak boleh kosong'),
+          });
+          const customApiKey = await password({
+            message: `API Key untuk "${customId}":`,
+            mask: '*',
+          });
+
+          providersMap[customId] = {
+            id: customId,
+            name: customName.trim(),
+            providerType: 'custom',
+            apiKey: customApiKey && customApiKey !== 'back' ? customApiKey.trim() : '',
+            baseUrl: customBaseUrl.trim(),
+            models: [trimmed],
+          };
+          targetProvider = customId;
+        }
+
         if (!savedModels.includes(trimmed)) {
           savedModels.push(trimmed);
         }
         activeModel = trimmed;
+
+        const modelProviderMap = { ...(currentConfig.modelProviderMap || {}) };
+        modelProviderMap[trimmed] = targetProvider;
+
+        if (providersMap[targetProvider] && !providersMap[targetProvider].models.includes(trimmed)) {
+          providersMap[targetProvider].models.push(trimmed);
+        }
+
+        const resolved = resolveProviderForModel({
+          ...currentConfig,
+          providers: providersMap,
+          modelProviderMap,
+        }, activeModel);
+
         const updatedConfig: AppConfig = {
           ...currentConfig,
           defaultModel: activeModel,
+          provider: resolved.providerId,
+          baseUrl: resolved.baseUrl,
+          apiKey: resolved.apiKey,
           savedModels,
+          providers: providersMap,
+          modelProviderMap,
         };
         await saveConfig(updatedConfig);
-        console.log(chalk.green(`\n✔ Model ${chalk.bold(trimmed)} ditambahkan dan langsung dijadikan model aktif!\n`));
+        console.log(chalk.green(`\n✔ Model ${chalk.bold(trimmed)} ditambahkan ke provider ${chalk.bold.yellow(targetProvider)} dan dijadikan model aktif!\n`));
         await pressEnterToContinue();
       }
     }
@@ -601,10 +680,22 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
         if (activeModel === modelToDelete) {
           activeModel = savedModels[0];
         }
+        const modelProviderMap = { ...(currentConfig.modelProviderMap || {}) };
+        delete modelProviderMap[modelToDelete];
+
+        const targetResolved = resolveProviderForModel({
+          ...currentConfig,
+          modelProviderMap,
+        }, activeModel);
+
         const updatedConfig: AppConfig = {
           ...currentConfig,
           defaultModel: activeModel,
+          provider: targetResolved.providerId,
+          baseUrl: targetResolved.baseUrl,
+          apiKey: targetResolved.apiKey,
           savedModels,
+          modelProviderMap,
         };
         await saveConfig(updatedConfig);
         console.log(chalk.green(`\n✔ Model ${chalk.bold(modelToDelete)} berhasil dihapus dari daftar.\n`));
@@ -621,50 +712,106 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
   let apiKey = currentConfig.apiKey || '';
   let defaultReportDir = currentConfig.defaultReportDir || '.lumio-reviews';
   let embeddingModel = currentConfig.embeddingModel || 'local';
+  let customProviderName = 'custom';
 
   // Wizard awal jika user baru pertama kali atau memilih konfigurasi
   printHeader('Menu Utama > 🤖 Configure AI Provider');
 
-  const selectedProvider = await select<AppConfig['provider'] | 'back'>({
+  const existingProviders = Object.keys(currentConfig.providers || {});
+  const customChoices = existingProviders
+    .filter((p) => p !== '9router' && p !== 'openai' && p !== 'openrouter' && p !== 'ollama')
+    .map((p) => ({
+      name: `🛠️  Custom: ${currentConfig.providers?.[p]?.name || p} (${p})`,
+      value: `custom:${p}`,
+    }));
+
+  const selectedProvider = await select<string>({
     message: 'Pilih AI Provider:',
     choices: [
       { name: '🌐 9router (Multi-model Gateway / ag/*)', value: '9router' },
       { name: '🟢 OpenAI Official (gpt-4o, o3, etc.)', value: 'openai' },
       { name: '🌌 OpenRouter (OpenRouter API)', value: 'openrouter' },
       { name: '💻 Ollama (Local Self-hosted)', value: 'ollama' },
-      { name: '🛠️  Custom OpenAI-Compatible Provider', value: 'custom' },
+      ...customChoices,
+      { name: '➕ Tambah Custom OpenAI-Compatible Provider Baru', value: 'new_custom' },
       { name: '🔙 Batalkan & Kembali ke Menu Utama', value: 'back' },
     ],
   });
 
   if (selectedProvider === 'back') return;
-  provider = selectedProvider;
 
-  if (provider === '9router') {
+  if (selectedProvider === 'new_custom') {
+    const rawName = await input({
+      message: 'Masukkan nama Custom Provider (contoh: groq, vllm-staging, together-ai):',
+      validate: (v) => (v.trim().length > 0 ? true : 'Nama provider tidak boleh kosong'),
+    });
+    const id = rawName.trim().toLowerCase().replace(/\s+/g, '-');
+    provider = id;
+    customProviderName = rawName.trim();
+
+    baseUrl = await input({
+      message: 'Base URL Provider:',
+      default: 'https://api.groq.com/openai/v1',
+      validate: (v) => (v.trim().length > 0 ? true : 'Base URL tidak boleh kosong'),
+    });
+
+    const enteredModel = await input({
+      message: 'Model AI untuk provider ini (pisahkan dengan koma jika lebih dari satu):',
+      default: 'llama-3.3-70b-versatile',
+      validate: (v) => (v.trim().length > 0 ? true : 'Model tidak boleh kosong'),
+    });
+    defaultModel = enteredModel.split(',')[0].trim();
+
+    embeddingModel = await input({
+      message: 'Embedding Model (contoh: text-embedding-3-large, text-embedding-3-small, atau "local"):',
+      default: 'local',
+    });
+  } else if (selectedProvider.startsWith('custom:')) {
+    const customId = selectedProvider.replace('custom:', '');
+    provider = customId;
+    const existing = currentConfig.providers?.[customId];
+    customProviderName = existing?.name || customId;
+    baseUrl = await input({
+      message: `Base URL untuk [${customProviderName}]:`,
+      default: existing?.baseUrl || currentConfig.baseUrl || '',
+    });
+    defaultModel = await input({
+      message: `Default Model untuk [${customProviderName}]:`,
+      default: existing?.models?.[0] || currentConfig.defaultModel || 'gpt-4o',
+    });
+    embeddingModel = await input({
+      message: 'Embedding Model (contoh: text-embedding-3-large, text-embedding-3-small, atau "local"):',
+      default: currentConfig.embeddingModel || 'local',
+    });
+  } else if (selectedProvider === '9router') {
+    provider = '9router';
     baseUrl = await input({
       message: '9router Base URL:',
-      default: currentConfig.baseUrl || 'https://api.9router.com/v1',
+      default: currentConfig.providers?.['9router']?.baseUrl || currentConfig.baseUrl || 'https://api.9router.com/v1',
     });
     defaultModel = await input({
       message: 'Default Model (contoh: ag/gemini-3.8-flash, cx/gpt-6-astra):',
       default: currentConfig.defaultModel || 'ag/gemini-3.8-flash',
     });
     embeddingModel = 'local';
-  } else if (provider === 'openai') {
+  } else if (selectedProvider === 'openai') {
+    provider = 'openai';
     baseUrl = '';
     defaultModel = await input({
       message: 'Default Model:',
       default: currentConfig.defaultModel || 'gpt-4o',
     });
     embeddingModel = 'text-embedding-3-small';
-  } else if (provider === 'openrouter') {
+  } else if (selectedProvider === 'openrouter') {
+    provider = 'openrouter';
     baseUrl = 'https://openrouter.ai/api/v1';
     defaultModel = await input({
       message: 'Default Model (contoh: anthropic/claude-3.5-sonnet, openai/gpt-4o):',
       default: currentConfig.defaultModel || 'openai/gpt-4o',
     });
     embeddingModel = 'local';
-  } else if (provider === 'ollama') {
+  } else if (selectedProvider === 'ollama') {
+    provider = 'ollama';
     baseUrl = await input({
       message: 'Ollama Base URL:',
       default: currentConfig.baseUrl || 'http://localhost:11434/v1',
@@ -674,28 +821,18 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
       default: currentConfig.defaultModel || 'qwen2.5-coder',
     });
     embeddingModel = 'local';
-  } else if (provider === 'custom') {
-    baseUrl = await input({
-      message: 'Custom Base URL:',
-      default: currentConfig.baseUrl || 'https://api.example.com/v1',
-    });
-    defaultModel = await input({
-      message: 'Default Model:',
-      default: currentConfig.defaultModel || 'gpt-4o',
-    });
-    embeddingModel = await input({
-      message: 'Embedding Model (contoh: text-embedding-3-large, text-embedding-3-small, atau "local"):',
-      default: currentConfig.embeddingModel || 'text-embedding-3-large',
-    });
   }
 
   if (provider !== 'ollama') {
+    const existingKey = currentConfig.providers?.[provider]?.apiKey || (currentConfig.provider === provider ? currentConfig.apiKey : '');
     const enteredKey = await password({
       message: `Masukkan API Key untuk ${provider} (kosongkan jika tidak ingin mengubah):`,
       mask: '*',
     });
     if (enteredKey && enteredKey !== 'back') {
       apiKey = enteredKey;
+    } else {
+      apiKey = existingKey;
     }
   }
 
@@ -731,6 +868,29 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
     }
 
     if (reviewAction === 'save') {
+      const providers = { ...(currentConfig.providers || {}) };
+      const modelProviderMap = { ...(currentConfig.modelProviderMap || {}) };
+
+      // Update / register provider ini di store
+      providers[provider] = {
+        id: provider,
+        name: customProviderName || provider,
+        providerType: (['9router', 'openai', 'openrouter', 'ollama'].includes(provider) ? provider : 'custom') as any,
+        apiKey,
+        baseUrl,
+        models: Array.from(new Set([defaultModel, ...(providers[provider]?.models || [])])),
+      };
+
+      // Daftarkan model ini ke mapping
+      modelProviderMap[defaultModel] = provider;
+
+      const savedModels = currentConfig.savedModels && currentConfig.savedModels.length > 0
+        ? [...currentConfig.savedModels]
+        : [];
+      if (!savedModels.includes(defaultModel)) {
+        savedModels.push(defaultModel);
+      }
+
       const newConfig: AppConfig = {
         ...currentConfig,
         provider,
@@ -739,9 +899,12 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
         defaultModel,
         embeddingModel,
         defaultReportDir,
+        providers,
+        modelProviderMap,
+        savedModels,
       };
       await saveConfig(newConfig);
-      console.log(chalk.green(`\n✔ Konfigurasi berhasil disimpan ke ~/.lumio/config.json!\n`));
+      console.log(chalk.green(`\n✔ Konfigurasi provider [${provider}] berhasil disimpan ke ~/.lumio/config.json!\n`));
       await pressEnterToContinue();
       return;
     }
@@ -803,6 +966,7 @@ async function showStatusUI(inRepo: boolean, config: AppConfig) {
   const currentBranch = inRepo ? await getCurrentBranch() : '-';
   const reportDir = resolveReportDir(config.defaultReportDir || '.lumio-reviews');
   const version = getAppVersion();
+  const resolved = resolveProviderForModel(config);
 
   console.log(chalk.cyan('─── Status Konfigurasi & Lingkungan ───'));
   console.log(`Brand Engine     : ${chalk.bold.yellow(`✨ Lumio v${version}`)}`);
@@ -815,10 +979,10 @@ async function showStatusUI(inRepo: boolean, config: AppConfig) {
     console.log(`Vector DB Path   : ${chalk.yellow('~/.lumio/db')}`);
   }
   console.log(`Report Directory : ${chalk.yellow(reportDir)}`);
-  console.log(`Active Provider  : ${chalk.bold.magenta(config.provider)}`);
-  console.log(`Base URL         : ${config.baseUrl || chalk.gray('(Default OpenAI)')}`);
+  console.log(`Active Provider  : ${chalk.bold.magenta(resolved.providerId)}`);
+  console.log(`Base URL         : ${resolved.baseUrl || chalk.gray('(Default OpenAI)')}`);
   console.log(`Default Model    : ${chalk.cyan(config.defaultModel)}`);
-  console.log(`API Key Status   : ${config.apiKey || process.env.OPENAI_API_KEY ? chalk.green('Configured ✅') : chalk.red('Missing ❌')}`);
+  console.log(`API Key Status   : ${resolved.apiKey ? chalk.green('Configured ✅') : chalk.red('Missing ❌')}`);
   console.log(chalk.cyan('───────────────────────────────────────\n'));
 
   await pressEnterToContinue();

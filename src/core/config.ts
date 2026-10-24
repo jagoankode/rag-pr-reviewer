@@ -5,12 +5,23 @@ import { createOpenAI } from '@ai-sdk/openai';
 
 export type DatabaseType = 'local' | 'qdrant';
 
+export interface ProviderProfile {
+  id: string; // e.g. '9router', 'openai', 'groq', 'my-proxy'
+  name: string; // display name e.g. '9router', 'Groq Cloud', 'Custom vLLM'
+  providerType: '9router' | 'openai' | 'openrouter' | 'ollama' | 'custom';
+  apiKey: string;
+  baseUrl: string;
+  models: string[];
+}
+
 export interface AppConfig {
-  provider: 'openai' | '9router' | 'openrouter' | 'ollama' | 'custom';
+  provider: string; // id provider yang sedang aktif (e.g. '9router', 'openai', atau nama custom)
   apiKey: string;
   baseUrl?: string;
   defaultModel: string;
   savedModels?: string[];
+  providers?: Record<string, ProviderProfile>;
+  modelProviderMap?: Record<string, string>; // mapping: modelName -> providerId
   embeddingModel?: string;
   embeddingApiKey?: string;
   embeddingBaseUrl?: string;
@@ -30,12 +41,37 @@ export function getConfigDir(): string {
 }
 
 const DEFAULT_CONFIG: AppConfig = {
-  provider: 'openai',
+  provider: '9router',
   apiKey: '',
-  baseUrl: '',
-  defaultModel: 'gpt-4o',
+  baseUrl: 'https://api.9router.com/v1',
+  defaultModel: 'ag/gemini-3.8-flash',
   savedModels: ['ag/gemini-3.8-flash', 'ag/claude-sonnet-4-6', 'cx/gpt-6-astra'],
-  embeddingModel: 'text-embedding-3-small',
+  providers: {
+    '9router': {
+      id: '9router',
+      name: '9router Gateway',
+      providerType: '9router',
+      apiKey: '',
+      baseUrl: 'https://api.9router.com/v1',
+      models: ['ag/gemini-3.8-flash', 'ag/claude-sonnet-4-6', 'cx/gpt-6-astra'],
+    },
+    'openai': {
+      id: 'openai',
+      name: 'OpenAI Official',
+      providerType: 'openai',
+      apiKey: '',
+      baseUrl: '',
+      models: ['gpt-4o', 'gpt-4o-mini', 'o3-mini'],
+    },
+  },
+  modelProviderMap: {
+    'ag/gemini-3.8-flash': '9router',
+    'ag/claude-sonnet-4-6': '9router',
+    'cx/gpt-6-astra': '9router',
+    'gpt-4o': 'openai',
+    'gpt-4o-mini': 'openai',
+  },
+  embeddingModel: 'local',
   defaultReportDir: '.lumio-reviews',
   dbType: 'local',
   qdrantUrl: '',
@@ -63,6 +99,40 @@ export async function loadConfig(): Promise<AppConfig> {
     const data = await fs.readFile(configFile, 'utf-8');
     const parsed = JSON.parse(data);
     const merged: AppConfig = { ...DEFAULT_CONFIG, ...parsed };
+
+    // Pastikan providers dan modelProviderMap terinisialisasi
+    if (!merged.providers) {
+      merged.providers = { ...DEFAULT_CONFIG.providers };
+    }
+    if (!merged.modelProviderMap) {
+      merged.modelProviderMap = { ...DEFAULT_CONFIG.modelProviderMap };
+    }
+
+    // Migration / sync: jika ada provider aktif di root config tapi belum ada di providers list
+    const currentProviderId = merged.provider || '9router';
+    if (!merged.providers[currentProviderId]) {
+      merged.providers[currentProviderId] = {
+        id: currentProviderId,
+        name: currentProviderId === 'custom' ? 'Custom Provider' : currentProviderId,
+        providerType: currentProviderId === 'openai' || currentProviderId === '9router' || currentProviderId === 'openrouter' || currentProviderId === 'ollama' ? (currentProviderId as any) : 'custom',
+        apiKey: merged.apiKey || '',
+        baseUrl: merged.baseUrl || '',
+        models: merged.savedModels || [merged.defaultModel],
+      };
+    }
+
+    // Pastikan model aktif terdaftar di modelProviderMap
+    if (merged.defaultModel && !merged.modelProviderMap[merged.defaultModel]) {
+      merged.modelProviderMap[merged.defaultModel] = currentProviderId;
+    }
+
+    // Pastikan models di provider profile tersinkron
+    for (const [model, provId] of Object.entries(merged.modelProviderMap)) {
+      if (merged.providers[provId] && !merged.providers[provId].models.includes(model)) {
+        merged.providers[provId].models.push(model);
+      }
+    }
+
     if (!merged.savedModels || !Array.isArray(merged.savedModels) || merged.savedModels.length === 0) {
       merged.savedModels = Array.from(new Set([merged.defaultModel, ...(DEFAULT_CONFIG.savedModels || [])]));
     } else if (!merged.savedModels.includes(merged.defaultModel)) {
@@ -78,6 +148,41 @@ export async function loadConfig(): Promise<AppConfig> {
       baseUrl: envBaseUrl,
     };
   }
+}
+
+/**
+ * Mendapatkan konfigurasi provider untuk model tertentu (atau active model jika tidak dispesifikasikan)
+ */
+export function resolveProviderForModel(config: AppConfig, modelName?: string): {
+  providerId: string;
+  providerProfile?: ProviderProfile;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+} {
+  const targetModel = modelName || config.defaultModel;
+  let provId = config.modelProviderMap?.[targetModel] || config.provider || '9router';
+
+  // Smart heuristic jika belum terpetakan
+  if (!config.modelProviderMap?.[targetModel]) {
+    if (targetModel.startsWith('ag/') || targetModel.startsWith('cx/')) {
+      provId = '9router';
+    } else if (targetModel.startsWith('gpt-') || targetModel.startsWith('o1') || targetModel.startsWith('o3')) {
+      provId = 'openai';
+    }
+  }
+
+  const profile = config.providers?.[provId];
+  const apiKey = profile?.apiKey || config.apiKey || process.env.OPENAI_API_KEY || '';
+  const baseUrl = profile?.baseUrl || config.baseUrl || (provId === '9router' ? 'https://api.9router.com/v1' : '');
+
+  return {
+    providerId: provId,
+    providerProfile: profile,
+    apiKey,
+    baseUrl,
+    model: targetModel,
+  };
 }
 
 export async function saveConfig(config: AppConfig): Promise<void> {
