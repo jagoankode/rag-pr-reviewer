@@ -15,6 +15,10 @@ export async function callLLM(prompt: string, modelOverride?: string, signal?: A
   const baseUrl = rawBaseUrl.replace(/\/+$/, '');
   const model = resolved.model;
 
+  if (!model) {
+    throw new Error('Belum ada Model AI yang aktif atau dipilih. Silakan pilih model via TUI (`⚡ Ganti Model Cepat`).');
+  }
+
   const url = `${baseUrl}/chat/completions`;
 
   const headers: Record<string, string> = {

@@ -12,6 +12,113 @@ import { listSavedReports, resolveReportDir, deleteReportFile, clearAllReports }
 import { getAppVersion } from '../core/version.js';
 import { promises as fs } from 'fs';
 
+function stripAnsi(str: string): string {
+  return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
+}
+
+function visibleWidth(str: string): string {
+  return str;
+}
+
+function padAnsiEnd(str: string, targetWidth: number): string {
+  const currentLen = stripAnsi(str).length;
+  if (currentLen >= targetWidth) return str;
+  return str + ' '.repeat(targetWidth - currentLen);
+}
+
+function renderBox(title: string, lines: string[], width: number, borderColor = chalk.cyan): string[] {
+  const innerW = width - 2;
+  const titlePart = title ? `─ ${title} ` : '';
+  const titleLen = stripAnsi(titlePart).length;
+  const remainingTop = Math.max(0, innerW - titleLen);
+  const top = borderColor(`╭${titlePart}${'─'.repeat(remainingTop)}╮`);
+  const bottom = borderColor(`╰${'─'.repeat(innerW)}╯`);
+
+  const body = lines.map((line) => {
+    const rawLen = stripAnsi(line).length;
+    const padding = Math.max(0, width - 4 - rawLen);
+    return borderColor('│ ') + line + ' '.repeat(padding) + borderColor(' │');
+  });
+
+  return [top, ...body, bottom];
+}
+
+async function renderDashboardHeader(config: AppConfig, inRepo: boolean) {
+  const version = getAppVersion();
+  const currentBranch = inRepo ? await getCurrentBranch() : 'no-git';
+  const resolved = resolveProviderForModel(config);
+  const reports = await listSavedReports(config.defaultReportDir || '.lumio-reviews');
+
+  const termW = Math.max(76, Math.min(100, process.stdout.columns || 80));
+  const leftW = Math.floor((termW - 2) * 0.48);
+  const rightW = termW - 2 - leftW;
+
+  // 1. Top Header Line: ✨ Lumio v2.4.0 | AI-Powered PR Reviewer           git:(branch)
+  const leftHeader = `${chalk.bold.yellow('✨ Lumio')} ${chalk.bold.cyan(`v${version}`)} ${chalk.gray('|')} ${chalk.gray('AI-Powered PR Reviewer')}`;
+  const rightHeader = inRepo ? chalk.cyan(`git:(${chalk.bold.green(currentBranch)}) ᚶ`) : chalk.gray('git:(offline)');
+  const spaceHeader = Math.max(2, termW - stripAnsi(leftHeader).length - stripAnsi(rightHeader).length);
+  
+  console.log(`${leftHeader}${' '.repeat(spaceHeader)}${rightHeader}\n`);
+
+  // 2. Left Panel: COMMANDS overview
+  const commandLines = [
+    `${chalk.cyan('🚀 /review  ')} ${chalk.white('Review PR / Git Changes')}`,
+    `${chalk.cyan('💬 /dialog  ')} ${chalk.white('Interactive RAG Chat')}`,
+    `${chalk.cyan('🧠 /learn   ')} ${chalk.white('Audit Local Feature Code')}`,
+    `${chalk.cyan('⚡ /model   ')} ${chalk.white('Ganti Model AI Cepat')}`,
+    `${chalk.cyan('🤖 /provider')} ${chalk.white('Setup AI Provider (9router)')}`,
+    `${chalk.cyan('💾 /db      ')} ${chalk.white('Storage Mode (LanceDB/Qdrant)')}`,
+    `${chalk.cyan('📜 /history ')} ${chalk.white('View Saved Reports')}`,
+    `${chalk.cyan('🚪 /quit    ')} ${chalk.white('Exit Lumio')}`,
+  ];
+  const leftBox = renderBox('COMMANDS', commandLines, leftW, chalk.blue);
+
+  // 3. Right Top Panel: ACTIVE CONTEXT & METRICS
+  const provId = resolved.providerId || 'none';
+  const modelId = config.defaultModel ? chalk.bold.green(config.defaultModel) : chalk.yellow('Belum Diset');
+  const dbStatus =
+    config.dbType === 'qdrant'
+      ? config.qdrantUrl && config.qdrantCollection
+        ? `${chalk.cyan(`Qdrant (${config.qdrantCollection})`)} ${chalk.green('● Online')}`
+        : `${chalk.yellow('Qdrant')} ${chalk.red('● Unset')}`
+      : `${chalk.blue('Local LanceDB')} ${chalk.green('● Ready')}`;
+
+  const contextLines = [
+    `• Provider: ${chalk.bold.bgCyan.black(` ${provId} `)}`,
+    `• Active Model: ${modelId}`,
+    `• Vector DB: ${dbStatus}`,
+    `• Git Target: ${inRepo ? chalk.cyan(currentBranch) : chalk.gray('Not a git repository')}`,
+  ];
+  const rightTopBox = renderBox('ACTIVE CONTEXT & METRICS', contextLines, rightW, chalk.cyan);
+
+  // 4. Right Bottom Panel: LAST AUDIT STATUS
+  let auditLines: string[] = [];
+  if (reports.length > 0) {
+    const last = reports[0];
+    auditLines = [
+      `Last report: ${chalk.white(last.filename.slice(0, rightW - 17))}`,
+      `${chalk.green('✔')} ${reports.length} report review tersimpan di history.`,
+    ];
+  } else {
+    auditLines = [
+      'No critical issues found in recent review.',
+      chalk.gray('Belum ada audit tersimpan. Jalankan /review.'),
+    ];
+  }
+  const rightBottomBox = renderBox('LAST AUDIT STATUS', auditLines, rightW, chalk.magenta);
+
+  const rightCombined = [...rightTopBox, ...rightBottomBox];
+
+  // Print 2 columns side by side
+  const totalRows = Math.max(leftBox.length, rightCombined.length);
+  for (let i = 0; i < totalRows; i++) {
+    const leftText = padAnsiEnd(leftBox[i] || '', leftW);
+    const rightText = rightCombined[i] || '';
+    console.log(`${leftText}  ${rightText}`);
+  }
+  console.log('');
+}
+
 function printHeader(breadcrumb: string) {
   console.clear();
   const version = getAppVersion();
@@ -32,67 +139,58 @@ function printHeader(breadcrumb: string) {
 
 export async function runInteractiveTUI() {
   while (true) {
-    printHeader('Menu Utama');
+    console.clear();
     const inRepo = await isGitRepo();
     const config = await loadConfig();
 
-    if (!inRepo) {
-      console.log(chalk.yellow('⚠️  Perhatian: Direktori saat ini bukan git repository. Opsi review dimatikan.\n'));
-    }
-
-    const dbBadge =
-      config.dbType === 'qdrant'
-        ? config.qdrantUrl && config.qdrantCollection
-          ? chalk.bold.green(`🌐 VPS Qdrant (${config.qdrantCollection})`)
-          : chalk.bold.yellow('⚠️ VPS Qdrant (Belum Dikonfigurasi)')
-        : chalk.bold.blue('💻 Local LanceDB (~/.lumio/db)');
+    await renderDashboardHeader(config, inRepo);
 
     const mainChoice = await select({
-      message: `Pilih aksi [DB Aktif: ${dbBadge}]:`,
+      message: chalk.cyan('> Select command or type action:'),
       choices: [
         {
-          name: '🔍 Review Git Changes / PR Branch (Source vs Target)',
+          name: `${chalk.bold.cyan('🚀 /review    ')} ${chalk.white('Review Git Changes / PR Branch')}`,
           value: 'review',
           disabled: !inRepo ? '(Bukan git repo)' : false,
         },
         {
-          name: '💬 Chat / Dialog Interaktif RAG (Tanya Jawab & Diskusi Aturan)',
+          name: `${chalk.bold.cyan('💬 /dialog    ')} ${chalk.white('Interactive RAG Chat (Tanya Jawab Aturan)')}`,
           value: 'dialog',
         },
         {
-          name: '🧠 Learn from Local Feature Code (Belajar dari Folder/Route Lokal)',
+          name: `${chalk.bold.cyan('🧠 /learn     ')} ${chalk.white('Learn from Local Feature Code (Audit Scaffold)')}`,
           value: 'learn_code',
         },
         {
-          name: '📖 Inspect Active Rules (Lihat Aturan yang Tersimpan di RAG)',
-          value: 'inspect_rules',
-        },
-        {
-          name: '📚 Ingest Knowledge / Conventions ke Vector DB',
-          value: 'ingest',
-        },
-        {
-          name: `💾 Database Storage Mode (${config.dbType === 'qdrant' ? '🌐 VPS Qdrant' : '💻 Local LanceDB'})`,
-          value: 'config_db',
-        },
-        {
-          name: '📜 View & Manage Review History (Buka / Hapus Report)',
-          value: 'history',
-        },
-        {
-          name: `⚡ Ganti Model Cepat (${chalk.green(config.defaultModel)} - ${chalk.yellow(config.provider)})`,
+          name: `${chalk.bold.cyan('⚡ /model     ')} ${chalk.white('Ganti Model AI Cepat (Switch / Reset)')}`,
           value: 'quick_switch_model',
         },
         {
-          name: `🤖 Configure AI Provider (${chalk.cyan(config.provider)})`,
+          name: `${chalk.bold.cyan('⚙️  /provider  ')} ${chalk.white('Configure AI Provider & Credentials')}`,
           value: 'config_ai',
         },
         {
-          name: '⚙️  Check Status & Config',
+          name: `${chalk.bold.cyan('💾 /db        ')} ${chalk.white('Database Storage Mode (VPS Qdrant / LanceDB)')}`,
+          value: 'config_db',
+        },
+        {
+          name: `${chalk.bold.cyan('📖 /rules     ')} ${chalk.white('Inspect Active Rules in Vector DB')}`,
+          value: 'inspect_rules',
+        },
+        {
+          name: `${chalk.bold.cyan('📚 /ingest    ')} ${chalk.white('Ingest Knowledge / Conventions ke Vector DB')}`,
+          value: 'ingest',
+        },
+        {
+          name: `${chalk.bold.cyan('📜 /history   ')} ${chalk.white('View & Manage Review History')}`,
+          value: 'history',
+        },
+        {
+          name: `${chalk.bold.cyan('📊 /status    ')} ${chalk.white('Check Environment & System Status')}`,
           value: 'status',
         },
         {
-          name: chalk.red('🚪 Keluar (Exit)'),
+          name: `${chalk.bold.red('🚪 /quit      ')} ${chalk.red('Exit Lumio')}`,
           value: 'exit',
         },
       ],
@@ -341,7 +439,16 @@ async function reviewWorkflowUI(config: AppConfig) {
   }
 
   const outputDir = config.defaultReportDir || '.lumio-reviews';
-  const selectedModel = config.defaultModel || 'ag/gemini-3.8-flash';
+  let selectedModel = config.defaultModel;
+
+  if (!selectedModel) {
+    console.log(chalk.yellow('\n⚠️  Belum ada model AI yang dipilih/aktif!'));
+    selectedModel = await input({
+      message: 'Masukkan nama model AI untuk review (contoh: ag/gemini-3.8-flash, gpt-4o):',
+      validate: (v) => (v.trim().length > 0 ? true : 'Model tidak boleh kosong'),
+    });
+    selectedModel = selectedModel.trim();
+  }
 
   console.log(chalk.gray(`\nℹ️  Menggunakan Model: ${chalk.cyan(selectedModel)} | Output: ${chalk.cyan(outputDir)}\n`));
   await reviewCommand({
@@ -507,21 +614,15 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
 }
 
 async function quickSwitchModelUI(currentConfig: AppConfig) {
-  let activeModel = currentConfig.defaultModel || 'ag/gemini-3.8-flash';
-  let savedModels = currentConfig.savedModels && currentConfig.savedModels.length > 0
-    ? [...currentConfig.savedModels]
-    : [activeModel, 'ag/claude-sonnet-4-6', 'cx/gpt-6-astra'];
-
-  if (!savedModels.includes(activeModel)) {
-    savedModels.unshift(activeModel);
-  }
+  let activeModel = currentConfig.defaultModel || '';
+  let savedModels = currentConfig.savedModels ? [...currentConfig.savedModels] : [];
 
   while (true) {
     const resolvedActive = resolveProviderForModel(currentConfig, activeModel);
     printHeader('Menu Utama > ⚡ Ganti Model Cepat');
 
-    console.log(chalk.cyan(`Provider Aktif : ${chalk.bold.yellow(resolvedActive.providerId)}`));
-    console.log(chalk.cyan(`Model Aktif    : ${chalk.bold.green(activeModel)}`));
+    console.log(chalk.cyan(`Provider Aktif : ${resolvedActive.providerId ? chalk.bold.yellow(resolvedActive.providerId) : chalk.gray('(Belum diset)')}`));
+    console.log(chalk.cyan(`Model Aktif    : ${activeModel ? chalk.bold.green(activeModel) : chalk.yellow('(Kosong / Belum Dipilih)')}`));
     console.log(chalk.gray(`Base URL       : ${resolvedActive.baseUrl || '(Default)'}\n`));
 
     const choices = [
@@ -534,7 +635,9 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
         };
       }),
       { name: '➕ Tambah Model Baru ke Daftar', value: 'add' },
-      { name: '🗑️  Hapus Model dari Daftar', value: 'delete' },
+      ...(savedModels.length > 0 ? [{ name: '🗑️  Hapus Model dari Daftar', value: 'delete' }] : []),
+      ...(activeModel ? [{ name: '⏸️  Kosongkan Model Aktif (Nonaktifkan)', value: 'clear_active' }] : []),
+      ...(savedModels.length > 0 ? [{ name: '🧹 Kosongkan Semua Model (Reset Daftar Model)', value: 'clear_all' }] : []),
       { name: '🔙 Kembali ke Menu Utama', value: 'back' },
     ];
 
@@ -547,12 +650,45 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
       return;
     }
 
+    if (action === 'clear_active') {
+      activeModel = '';
+      const updatedConfig: AppConfig = {
+        ...currentConfig,
+        defaultModel: '',
+        savedModels,
+      };
+      await saveConfig(updatedConfig);
+      console.log(chalk.yellow(`\n✔ Model aktif berhasil dikosongkan.\n`));
+      await pressEnterToContinue();
+      continue;
+    }
+
+    if (action === 'clear_all') {
+      const confirmClear = await confirm({
+        message: 'Apakah Anda yakin ingin MENGOSONGKAN SEMUA model dari daftar?',
+        default: false,
+      });
+      if (confirmClear) {
+        activeModel = '';
+        savedModels = [];
+        const updatedConfig: AppConfig = {
+          ...currentConfig,
+          defaultModel: '',
+          savedModels: [],
+          modelProviderMap: {},
+        };
+        await saveConfig(updatedConfig);
+        console.log(chalk.green(`\n✔ Semua model berhasil dihapus. Daftar model sekarang kosong.\n`));
+        await pressEnterToContinue();
+      }
+      continue;
+    }
+
     if (action.startsWith('select:')) {
       const chosen = action.replace('select:', '');
       activeModel = chosen;
       const targetResolved = resolveProviderForModel(currentConfig, activeModel);
 
-      // Otomatis sinkronkan provider aktif & baseUrl ke config provider model tersebut
       const updatedConfig: AppConfig = {
         ...currentConfig,
         defaultModel: activeModel,
@@ -577,7 +713,6 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
       if (newModelName && newModelName !== 'back') {
         const trimmed = newModelName.trim();
 
-        // Tanyakan model ini milik provider mana
         const knownProviders = Object.keys(currentConfig.providers || { '9router': 1, 'openai': 1 });
         const providerChoices = [
           ...knownProviders.map((p) => {
@@ -658,12 +793,6 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
     }
 
     if (action === 'delete') {
-      if (savedModels.length <= 1) {
-        console.log(chalk.yellow('\n⚠️  Tidak bisa menghapus model terakhir dari daftar.\n'));
-        await pressEnterToContinue();
-        continue;
-      }
-
       const modelToDelete = await select({
         message: 'Pilih model yang ingin dihapus dari daftar:',
         choices: [
@@ -678,7 +807,7 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
       if (modelToDelete !== 'back') {
         savedModels = savedModels.filter((m) => m !== modelToDelete);
         if (activeModel === modelToDelete) {
-          activeModel = savedModels[0];
+          activeModel = savedModels.length > 0 ? savedModels[0] : '';
         }
         const modelProviderMap = { ...(currentConfig.modelProviderMap || {}) };
         delete modelProviderMap[modelToDelete];
@@ -706,256 +835,342 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
 }
 
 async function configureAIProviderUI(currentConfig: AppConfig) {
-  let provider = currentConfig.provider || '9router';
-  let baseUrl = currentConfig.baseUrl || (provider === '9router' ? 'http://localhost:20128/v1' : '');
-  let defaultModel = currentConfig.defaultModel || 'ag/gemini-3.8-flash';
-  let apiKey = currentConfig.apiKey || '';
-  let defaultReportDir = currentConfig.defaultReportDir || '.lumio-reviews';
-  let embeddingModel = currentConfig.embeddingModel || 'local';
-  let customProviderName = 'custom';
-
-  // Wizard awal jika user baru pertama kali atau memilih konfigurasi
-  printHeader('Menu Utama > 🤖 Configure AI Provider');
-
-  const existingProviders = Object.keys(currentConfig.providers || {});
-  const customChoices = existingProviders
-    .filter((p) => p !== '9router' && p !== 'openai' && p !== 'openrouter' && p !== 'ollama')
-    .map((p) => ({
-      name: `🛠️  Custom: ${currentConfig.providers?.[p]?.name || p} (${p})`,
-      value: `custom:${p}`,
-    }));
-
-  const selectedProvider = await select<string>({
-    message: 'Pilih AI Provider:',
-    choices: [
-      { name: '🌐 9router (Multi-model Gateway / ag/*)', value: '9router' },
-      { name: '🟢 OpenAI Official (gpt-4o, o3, etc.)', value: 'openai' },
-      { name: '🌌 OpenRouter (OpenRouter API)', value: 'openrouter' },
-      { name: '💻 Ollama (Local Self-hosted)', value: 'ollama' },
-      ...customChoices,
-      { name: '➕ Tambah Custom OpenAI-Compatible Provider Baru', value: 'new_custom' },
-      { name: '🔙 Batalkan & Kembali ke Menu Utama', value: 'back' },
-    ],
-  });
-
-  if (selectedProvider === 'back') return;
-
-  if (selectedProvider === 'new_custom') {
-    const rawName = await input({
-      message: 'Masukkan nama Custom Provider (contoh: groq, vllm-staging, together-ai):',
-      validate: (v) => (v.trim().length > 0 ? true : 'Nama provider tidak boleh kosong'),
-    });
-    const id = rawName.trim().toLowerCase().replace(/\s+/g, '-');
-    provider = id;
-    customProviderName = rawName.trim();
-
-    baseUrl = await input({
-      message: 'Base URL Provider:',
-      default: 'https://api.groq.com/openai/v1',
-      validate: (v) => (v.trim().length > 0 ? true : 'Base URL tidak boleh kosong'),
-    });
-
-    const enteredModel = await input({
-      message: 'Model AI untuk provider ini (pisahkan dengan koma jika lebih dari satu):',
-      default: 'llama-3.3-70b-versatile',
-      validate: (v) => (v.trim().length > 0 ? true : 'Model tidak boleh kosong'),
-    });
-    defaultModel = enteredModel.split(',')[0].trim();
-
-    embeddingModel = await input({
-      message: 'Embedding Model (contoh: text-embedding-3-large, text-embedding-3-small, atau "local"):',
-      default: 'local',
-    });
-  } else if (selectedProvider.startsWith('custom:')) {
-    const customId = selectedProvider.replace('custom:', '');
-    provider = customId;
-    const existing = currentConfig.providers?.[customId];
-    customProviderName = existing?.name || customId;
-    baseUrl = await input({
-      message: `Base URL untuk [${customProviderName}]:`,
-      default: existing?.baseUrl || currentConfig.baseUrl || '',
-    });
-    defaultModel = await input({
-      message: `Default Model untuk [${customProviderName}]:`,
-      default: existing?.models?.[0] || currentConfig.defaultModel || 'gpt-4o',
-    });
-    embeddingModel = await input({
-      message: 'Embedding Model (contoh: text-embedding-3-large, text-embedding-3-small, atau "local"):',
-      default: currentConfig.embeddingModel || 'local',
-    });
-  } else if (selectedProvider === '9router') {
-    provider = '9router';
-    baseUrl = await input({
-      message: '9router Base URL:',
-      default: currentConfig.providers?.['9router']?.baseUrl || currentConfig.baseUrl || 'http://localhost:20128/v1',
-    });
-    defaultModel = await input({
-      message: 'Default Model (contoh: ag/gemini-3.8-flash, cx/gpt-6-astra):',
-      default: currentConfig.defaultModel || 'ag/gemini-3.8-flash',
-    });
-    embeddingModel = 'local';
-  } else if (selectedProvider === 'openai') {
-    provider = 'openai';
-    baseUrl = '';
-    defaultModel = await input({
-      message: 'Default Model:',
-      default: currentConfig.defaultModel || 'gpt-4o',
-    });
-    embeddingModel = 'text-embedding-3-small';
-  } else if (selectedProvider === 'openrouter') {
-    provider = 'openrouter';
-    baseUrl = 'https://openrouter.ai/api/v1';
-    defaultModel = await input({
-      message: 'Default Model (contoh: anthropic/claude-3.5-sonnet, openai/gpt-4o):',
-      default: currentConfig.defaultModel || 'openai/gpt-4o',
-    });
-    embeddingModel = 'local';
-  } else if (selectedProvider === 'ollama') {
-    provider = 'ollama';
-    baseUrl = await input({
-      message: 'Ollama Base URL:',
-      default: currentConfig.baseUrl || 'http://localhost:11434/v1',
-    });
-    defaultModel = await input({
-      message: 'Ollama Model:',
-      default: currentConfig.defaultModel || 'qwen2.5-coder',
-    });
-    embeddingModel = 'local';
-  }
-
-  if (provider !== 'ollama') {
-    const existingKey = currentConfig.providers?.[provider]?.apiKey || (currentConfig.provider === provider ? currentConfig.apiKey : '');
-    const enteredKey = await password({
-      message: `Masukkan API Key untuk ${provider} (kosongkan jika tidak ingin mengubah):`,
-      mask: '*',
-    });
-    if (enteredKey && enteredKey !== 'back') {
-      apiKey = enteredKey;
-    } else {
-      apiKey = existingKey;
-    }
-  }
-
-  // REVIEW & EDIT CONFIRMATION LOOP (Anti-Typo Safeguard)
   while (true) {
-    printHeader('Menu Utama > 🤖 Configure AI Provider > Konfirmasi');
+    printHeader('Menu Utama > 🤖 Configure AI Provider');
 
-    const maskedKey = apiKey ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : chalk.gray('(Tidak ada / kosong)');
+    const resolved = resolveProviderForModel(currentConfig);
+    console.log(chalk.cyan(`Provider Aktif : ${resolved.providerId ? chalk.bold.yellow(resolved.providerId) : chalk.gray('(Belum diset)')}`));
+    console.log(chalk.cyan(`Base URL       : ${chalk.white(resolved.baseUrl || '(Default)')}`));
+    console.log(chalk.cyan(`Model Aktif    : ${chalk.green(currentConfig.defaultModel || '(Kosong)')}\n`));
 
-    console.log(chalk.cyan('─── Ringkasan Konfigurasi AI (Cek Typo Sebelum Simpan) ───'));
-    console.log(`1. Provider        : ${chalk.bold.yellow(provider)}`);
-    console.log(`2. Base URL        : ${chalk.white(baseUrl || chalk.gray('(Default SDK)'))}`);
-    console.log(`3. Default Model   : ${chalk.bold.green(defaultModel)}`);
-    console.log(`4. Embedding Model : ${chalk.bold.magenta(embeddingModel || 'local')}`);
-    console.log(`5. API Key         : ${chalk.white(maskedKey)}`);
-    console.log(`6. Report Dir      : ${chalk.white(defaultReportDir)}`);
-    console.log(chalk.cyan('──────────────────────────────────────────────────────────\n'));
+    const existingProviders = Object.keys(currentConfig.providers || {});
 
-    const reviewAction = await select({
-      message: 'Apakah konfigurasi di atas sudah sesuai?',
+    const menuAction = await select({
+      message: 'Pilih aksi pengelolaan AI Provider:',
       choices: [
-        { name: '✅ Ya, Simpan & Terapkan Konfigurasi', value: 'save' },
-        { name: '✏️  Edit Field Tertentu (Koreksi Typo)', value: 'edit_field' },
-        { name: '🔄 Setup Ulang dari Awal', value: 'restart' },
-        { name: '🔙 Batalkan & Kembali ke Menu Utama (Tanpa Simpan)', value: 'cancel' },
+        { name: '✏️  Pilih / Edit Konfigurasi Provider Terdaftar', value: 'edit' },
+        { name: '➕ Tambah Provider Baru (Custom / Proxy / Official)', value: 'add' },
+        ...(existingProviders.length > 0 ? [{ name: '🗑️  Hapus Provider Terdaftar', value: 'delete' }] : []),
+        { name: '🔙 Kembali ke Menu Utama', value: 'back' },
       ],
     });
 
-    if (reviewAction === 'cancel' || reviewAction === 'back') {
-      console.log(chalk.gray('\nPerubahan konfigurasi AI dibatalkan.\n'));
-      await pressEnterToContinue();
+    if (menuAction === 'back') {
       return;
     }
 
-    if (reviewAction === 'save') {
-      const providers = { ...(currentConfig.providers || {}) };
-      const modelProviderMap = { ...(currentConfig.modelProviderMap || {}) };
-
-      // Update / register provider ini di store
-      providers[provider] = {
-        id: provider,
-        name: customProviderName || provider,
-        providerType: (['9router', 'openai', 'openrouter', 'ollama'].includes(provider) ? provider : 'custom') as any,
-        apiKey,
-        baseUrl,
-        models: Array.from(new Set([defaultModel, ...(providers[provider]?.models || [])])),
-      };
-
-      // Daftarkan model ini ke mapping
-      modelProviderMap[defaultModel] = provider;
-
-      const savedModels = currentConfig.savedModels && currentConfig.savedModels.length > 0
-        ? [...currentConfig.savedModels]
-        : [];
-      if (!savedModels.includes(defaultModel)) {
-        savedModels.push(defaultModel);
-      }
-
-      const newConfig: AppConfig = {
-        ...currentConfig,
-        provider,
-        apiKey,
-        baseUrl,
-        defaultModel,
-        embeddingModel,
-        defaultReportDir,
-        providers,
-        modelProviderMap,
-        savedModels,
-      };
-      await saveConfig(newConfig);
-      console.log(chalk.green(`\n✔ Konfigurasi provider [${provider}] berhasil disimpan ke ~/.lumio/config.json!\n`));
-      await pressEnterToContinue();
-      return;
-    }
-
-    if (reviewAction === 'restart') {
-      return await configureAIProviderUI(currentConfig);
-    }
-
-    if (reviewAction === 'edit_field') {
-      const fieldToEdit = await select({
-        message: 'Pilih data yang ingin diperbaiki:',
+    if (menuAction === 'delete') {
+      const providerToDelete = await select({
+        message: 'Pilih provider yang ingin dihapus:',
         choices: [
-          { name: `🌐 Base URL [${baseUrl}]`, value: 'baseUrl' },
-          { name: `⚡ Default Model [${defaultModel}]`, value: 'model' },
-          { name: `📐 Embedding Model [${embeddingModel}]`, value: 'embeddingModel' },
-          { name: `🔑 API Key`, value: 'apiKey' },
-          { name: `📁 Report Dir [${defaultReportDir}]`, value: 'reportDir' },
-          { name: '🔙 Selesai Edit (Kembali ke Ringkasan)', value: 'back' },
+          ...existingProviders.map((p) => {
+            const prof = currentConfig.providers?.[p];
+            const isCurrent = currentConfig.provider === p ? chalk.yellow(' (Sedang Aktif)') : '';
+            return {
+              name: `🗑️  ${prof?.name || p} [${p}]${isCurrent}`,
+              value: p,
+            };
+          }),
+          { name: '🔙 Batalkan', value: 'back' },
         ],
       });
 
-      if (fieldToEdit === 'baseUrl') {
-        const val = await input({
-          message: 'Koreksi Base URL:',
-          default: baseUrl,
+      if (providerToDelete !== 'back') {
+        const confirmDel = await confirm({
+          message: `Hapus provider "${providerToDelete}" beserta pemetaan modelnya?`,
+          default: false,
         });
-        if (val && val !== 'back') baseUrl = val.trim();
-      } else if (fieldToEdit === 'model') {
-        const val = await input({
-          message: 'Koreksi Default Model AI:',
-          default: defaultModel,
+
+        if (confirmDel) {
+          const providers = { ...(currentConfig.providers || {}) };
+          delete providers[providerToDelete];
+
+          const modelProviderMap = { ...(currentConfig.modelProviderMap || {}) };
+          for (const [model, prov] of Object.entries(modelProviderMap)) {
+            if (prov === providerToDelete) {
+              delete modelProviderMap[model];
+            }
+          }
+
+          const remainingProviders = Object.keys(providers);
+          const newActiveProvider = currentConfig.provider === providerToDelete
+            ? (remainingProviders.length > 0 ? remainingProviders[0] : '')
+            : (currentConfig.provider || '');
+
+          const targetResolved = resolveProviderForModel({
+            ...currentConfig,
+            providers,
+            modelProviderMap,
+            provider: newActiveProvider,
+          }, currentConfig.defaultModel);
+
+          currentConfig = {
+            ...currentConfig,
+            providers,
+            modelProviderMap,
+            provider: newActiveProvider,
+            baseUrl: targetResolved.baseUrl,
+            apiKey: targetResolved.apiKey,
+          };
+          await saveConfig(currentConfig);
+          console.log(chalk.green(`\n✔ Provider [${chalk.bold(providerToDelete)}] berhasil dihapus!\n`));
+          await pressEnterToContinue();
+        }
+      }
+      continue;
+    }
+
+    let provider = '';
+    let baseUrl = '';
+    let defaultModel = currentConfig.defaultModel || 'ag/gemini-3.8-flash';
+    let apiKey = '';
+    let defaultReportDir = currentConfig.defaultReportDir || '.lumio-reviews';
+    let embeddingModel = currentConfig.embeddingModel || 'local';
+    let customProviderName = '';
+
+    if (menuAction === 'add') {
+      const providerTypeChoice = await select({
+        message: 'Pilih tipe provider yang ingin ditambahkan:',
+        choices: [
+          { name: '🛠️  Custom OpenAI-Compatible (Groq, Together, vLLM, DeepSeek, dsb.)', value: 'custom' },
+          { name: '🌐 9router Multi-Model Gateway', value: '9router' },
+          { name: '🟢 OpenAI Official', value: 'openai' },
+          { name: '🌌 OpenRouter API', value: 'openrouter' },
+          { name: '💻 Ollama Local Self-Hosted', value: 'ollama' },
+          { name: '🔙 Batalkan', value: 'back' },
+        ],
+      });
+
+      if (providerTypeChoice === 'back') continue;
+
+      if (providerTypeChoice === 'custom') {
+        const rawName = await input({
+          message: 'Nama identifier Provider baru (contoh: groq, vllm-local, together-ai):',
+          validate: (v) => (v.trim().length > 0 ? true : 'Nama provider tidak boleh kosong'),
         });
-        if (val && val !== 'back') defaultModel = val.trim();
-      } else if (fieldToEdit === 'embeddingModel') {
-        const val = await input({
-          message: 'Koreksi Embedding Model (contoh: text-embedding-3-large, text-embedding-3-small, local):',
-          default: embeddingModel,
+        const id = rawName.trim().toLowerCase().replace(/\s+/g, '-');
+        provider = id;
+        customProviderName = rawName.trim();
+
+        baseUrl = await input({
+          message: 'Base URL Provider:',
+          default: 'https://api.groq.com/openai/v1',
+          validate: (v) => (v.trim().length > 0 ? true : 'Base URL tidak boleh kosong'),
         });
-        if (val && val !== 'back') embeddingModel = val.trim();
-      } else if (fieldToEdit === 'apiKey') {
-        const val = await password({
-          message: 'Masukkan API Key baru:',
-          mask: '*',
+
+        const enteredModel = await input({
+          message: 'Model AI untuk provider ini (pisahkan dengan koma jika lebih dari satu):',
+          default: 'llama-3.3-70b-versatile',
+          validate: (v) => (v.trim().length > 0 ? true : 'Model tidak boleh kosong'),
         });
-        if (val && val !== 'back') apiKey = val.trim();
-      } else if (fieldToEdit === 'reportDir') {
-        const val = await input({
-          message: 'Koreksi Report Dir:',
-          default: defaultReportDir,
+        defaultModel = enteredModel.split(',')[0].trim();
+        embeddingModel = 'local';
+      } else if (providerTypeChoice === '9router') {
+        provider = '9router';
+        customProviderName = '9router Gateway';
+        baseUrl = await input({
+          message: '9router Base URL:',
+          default: 'http://localhost:20128/v1',
         });
-        if (val && val !== 'back') defaultReportDir = val.trim();
+        defaultModel = 'ag/gemini-3.8-flash';
+        embeddingModel = 'local';
+      } else if (providerTypeChoice === 'openai') {
+        provider = 'openai';
+        customProviderName = 'OpenAI Official';
+        baseUrl = '';
+        defaultModel = 'gpt-4o';
+        embeddingModel = 'text-embedding-3-small';
+      } else if (providerTypeChoice === 'openrouter') {
+        provider = 'openrouter';
+        customProviderName = 'OpenRouter API';
+        baseUrl = 'https://openrouter.ai/api/v1';
+        defaultModel = 'anthropic/claude-3.5-sonnet';
+        embeddingModel = 'local';
+      } else if (providerTypeChoice === 'ollama') {
+        provider = 'ollama';
+        customProviderName = 'Ollama Local';
+        baseUrl = await input({
+          message: 'Ollama Base URL:',
+          default: 'http://localhost:11434/v1',
+        });
+        defaultModel = 'qwen2.5-coder';
+        embeddingModel = 'local';
+      }
+    } else if (menuAction === 'edit') {
+      const providerListChoices = existingProviders.map((p) => {
+        const prof = currentConfig.providers?.[p];
+        const isCurrent = currentConfig.provider === p ? chalk.yellow(' [Sedang Aktif]') : '';
+        return {
+          name: `📦 ${prof?.name || p} (${p})${isCurrent}`,
+          value: p,
+        };
+      });
+
+      if (providerListChoices.length === 0) {
+        console.log(chalk.yellow('\n⚠️  Belum ada provider yang terdaftar. Silakan pilih "Tambah Provider Baru".\n'));
+        await pressEnterToContinue();
+        continue;
+      }
+
+      providerListChoices.push({ name: '🔙 Batalkan', value: 'back' });
+
+      const targetP = await select({
+        message: 'Pilih provider yang ingin diedit/diaktifkan:',
+        choices: providerListChoices,
+      });
+
+      if (targetP === 'back') continue;
+
+      provider = targetP;
+      const prof = currentConfig.providers?.[targetP];
+      customProviderName = prof?.name || targetP;
+      baseUrl = prof?.baseUrl || (targetP === '9router' ? 'http://localhost:20128/v1' : '');
+      defaultModel = prof?.models?.[0] || currentConfig.defaultModel || 'gpt-4o';
+      apiKey = prof?.apiKey || (currentConfig.provider === targetP ? (currentConfig.apiKey || '') : '');
+
+      baseUrl = await input({
+        message: `Base URL untuk [${customProviderName}]:`,
+        default: baseUrl,
+      });
+
+      defaultModel = await input({
+        message: `Default Model untuk [${customProviderName}]:`,
+        default: defaultModel,
+      });
+
+      embeddingModel = await input({
+        message: 'Embedding Model (text-embedding-3-large, text-embedding-3-small, atau "local"):',
+        default: currentConfig.embeddingModel || 'local',
+      });
+    }
+
+    if (provider !== 'ollama') {
+      const existingKey = currentConfig.providers?.[provider]?.apiKey || (currentConfig.provider === provider ? (currentConfig.apiKey || '') : '');
+      const enteredKey = await password({
+        message: `Masukkan API Key untuk ${provider} (kosongkan jika tidak ingin mengubah):`,
+        mask: '*',
+      });
+      if (enteredKey && enteredKey !== 'back') {
+        apiKey = enteredKey;
+      } else {
+        apiKey = existingKey;
+      }
+    }
+
+    // REVIEW & EDIT CONFIRMATION LOOP
+    while (true) {
+      printHeader('Menu Utama > 🤖 Configure AI Provider > Konfirmasi');
+
+      const maskedKey = apiKey ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : chalk.gray('(Tidak ada / kosong)');
+
+      console.log(chalk.cyan('─── Ringkasan Konfigurasi AI (Cek Typo Sebelum Simpan) ───'));
+      console.log(`1. Provider        : ${chalk.bold.yellow(provider)}`);
+      console.log(`2. Base URL        : ${chalk.white(baseUrl || chalk.gray('(Default SDK)'))}`);
+      console.log(`3. Default Model   : ${chalk.bold.green(defaultModel)}`);
+      console.log(`4. Embedding Model : ${chalk.bold.magenta(embeddingModel || 'local')}`);
+      console.log(`5. API Key         : ${chalk.white(maskedKey)}`);
+      console.log(`6. Report Dir      : ${chalk.white(defaultReportDir)}`);
+      console.log(chalk.cyan('──────────────────────────────────────────────────────────\n'));
+
+      const reviewAction = await select({
+        message: 'Apakah konfigurasi di atas sudah sesuai?',
+        choices: [
+          { name: '✅ Ya, Simpan & Terapkan Konfigurasi', value: 'save' },
+          { name: '✏️  Edit Field Tertentu (Koreksi Typo)', value: 'edit_field' },
+          { name: '🔙 Batalkan (Tanpa Simpan)', value: 'cancel' },
+        ],
+      });
+
+      if (reviewAction === 'cancel' || reviewAction === 'back') {
+        console.log(chalk.gray('\nPerubahan konfigurasi AI dibatalkan.\n'));
+        await pressEnterToContinue();
+        break;
+      }
+
+      if (reviewAction === 'save') {
+        const providers = { ...(currentConfig.providers || {}) };
+        const modelProviderMap = { ...(currentConfig.modelProviderMap || {}) };
+
+        providers[provider] = {
+          id: provider,
+          name: customProviderName || provider,
+          providerType: (['9router', 'openai', 'openrouter', 'ollama'].includes(provider) ? provider : 'custom') as any,
+          apiKey,
+          baseUrl,
+          models: Array.from(new Set([defaultModel, ...(providers[provider]?.models || [])])),
+        };
+
+        modelProviderMap[defaultModel] = provider;
+
+        const savedModels = currentConfig.savedModels && currentConfig.savedModels.length > 0
+          ? [...currentConfig.savedModels]
+          : [];
+        if (!savedModels.includes(defaultModel)) {
+          savedModels.push(defaultModel);
+        }
+
+        currentConfig = {
+          ...currentConfig,
+          provider,
+          apiKey,
+          baseUrl,
+          defaultModel,
+          embeddingModel,
+          defaultReportDir,
+          providers,
+          modelProviderMap,
+          savedModels,
+        };
+        await saveConfig(currentConfig);
+        console.log(chalk.green(`\n✔ Konfigurasi provider [${chalk.bold(provider)}] berhasil disimpan!\n`));
+        await pressEnterToContinue();
+        break;
+      }
+
+      if (reviewAction === 'edit_field') {
+        const fieldToEdit = await select({
+          message: 'Pilih data yang ingin diperbaiki:',
+          choices: [
+            { name: `🌐 Base URL [${baseUrl}]`, value: 'baseUrl' },
+            { name: `⚡ Default Model [${defaultModel}]`, value: 'model' },
+            { name: `📐 Embedding Model [${embeddingModel}]`, value: 'embeddingModel' },
+            { name: `🔑 API Key`, value: 'apiKey' },
+            { name: `📁 Report Dir [${defaultReportDir}]`, value: 'reportDir' },
+            { name: '🔙 Selesai Edit (Kembali ke Ringkasan)', value: 'back' },
+          ],
+        });
+
+        if (fieldToEdit === 'baseUrl') {
+          const val = await input({
+            message: 'Koreksi Base URL:',
+            default: baseUrl,
+          });
+          if (val && val !== 'back') baseUrl = val.trim();
+        } else if (fieldToEdit === 'model') {
+          const val = await input({
+            message: 'Koreksi Default Model AI:',
+            default: defaultModel,
+          });
+          if (val && val !== 'back') defaultModel = val.trim();
+        } else if (fieldToEdit === 'embeddingModel') {
+          const val = await input({
+            message: 'Koreksi Embedding Model:',
+            default: embeddingModel,
+          });
+          if (val && val !== 'back') embeddingModel = val.trim();
+        } else if (fieldToEdit === 'apiKey') {
+          const val = await password({
+            message: 'Masukkan API Key baru:',
+            mask: '*',
+          });
+          if (val && val !== 'back') apiKey = val.trim();
+        } else if (fieldToEdit === 'reportDir') {
+          const val = await input({
+            message: 'Koreksi Report Dir:',
+            default: defaultReportDir,
+          });
+          if (val && val !== 'back') defaultReportDir = val.trim();
+        }
       }
     }
   }

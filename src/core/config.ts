@@ -15,10 +15,10 @@ export interface ProviderProfile {
 }
 
 export interface AppConfig {
-  provider: string; // id provider yang sedang aktif (e.g. '9router', 'openai', atau nama custom)
-  apiKey: string;
+  provider?: string; // id provider yang sedang aktif (e.g. '9router', 'openai', atau nama custom)
+  apiKey?: string;
   baseUrl?: string;
-  defaultModel: string;
+  defaultModel?: string; // bisa kosong jika user belum / sengaja mengosongkan model aktif
   savedModels?: string[];
   providers?: Record<string, ProviderProfile>;
   modelProviderMap?: Record<string, string>; // mapping: modelName -> providerId
@@ -108,22 +108,8 @@ export async function loadConfig(): Promise<AppConfig> {
       merged.modelProviderMap = { ...DEFAULT_CONFIG.modelProviderMap };
     }
 
-    // Migration / sync: jika ada provider aktif di root config tapi belum ada di providers list
-    const currentProviderId = merged.provider || '9router';
-    if (!merged.providers[currentProviderId]) {
-      merged.providers[currentProviderId] = {
-        id: currentProviderId,
-        name: currentProviderId === 'custom' ? 'Custom Provider' : currentProviderId,
-        providerType: currentProviderId === 'openai' || currentProviderId === '9router' || currentProviderId === 'openrouter' || currentProviderId === 'ollama' ? (currentProviderId as any) : 'custom',
-        apiKey: merged.apiKey || '',
-        baseUrl: merged.baseUrl || '',
-        models: merged.savedModels || [merged.defaultModel],
-      };
-    }
-
-    // Pastikan model aktif terdaftar di modelProviderMap
-    if (merged.defaultModel && !merged.modelProviderMap[merged.defaultModel]) {
-      merged.modelProviderMap[merged.defaultModel] = currentProviderId;
+    if (!Array.isArray(merged.savedModels)) {
+      merged.savedModels = merged.defaultModel ? [merged.defaultModel] : [];
     }
 
     // Pastikan models di provider profile tersinkron
@@ -133,11 +119,6 @@ export async function loadConfig(): Promise<AppConfig> {
       }
     }
 
-    if (!merged.savedModels || !Array.isArray(merged.savedModels) || merged.savedModels.length === 0) {
-      merged.savedModels = Array.from(new Set([merged.defaultModel, ...(DEFAULT_CONFIG.savedModels || [])]));
-    } else if (!merged.savedModels.includes(merged.defaultModel)) {
-      merged.savedModels.unshift(merged.defaultModel);
-    }
     return merged;
   } catch {
     const envApiKey = process.env.OPENAI_API_KEY || '';
@@ -160,11 +141,11 @@ export function resolveProviderForModel(config: AppConfig, modelName?: string): 
   baseUrl: string;
   model: string;
 } {
-  const targetModel = modelName || config.defaultModel;
-  let provId = config.modelProviderMap?.[targetModel] || config.provider || '9router';
+  const targetModel = modelName || config.defaultModel || '';
+  let provId = (targetModel ? config.modelProviderMap?.[targetModel] : undefined) || config.provider || '9router';
 
-  // Smart heuristic jika belum terpetakan
-  if (!config.modelProviderMap?.[targetModel]) {
+  // Heuristic jika belum terpetakan
+  if (targetModel && !config.modelProviderMap?.[targetModel]) {
     if (targetModel.startsWith('ag/') || targetModel.startsWith('cx/')) {
       provId = '9router';
     } else if (targetModel.startsWith('gpt-') || targetModel.startsWith('o1') || targetModel.startsWith('o3')) {
