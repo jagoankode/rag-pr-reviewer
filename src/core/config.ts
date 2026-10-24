@@ -43,7 +43,7 @@ export function getConfigDir(): string {
 const DEFAULT_CONFIG: AppConfig = {
   provider: '9router',
   apiKey: '',
-  baseUrl: 'https://api.9router.com/v1',
+  baseUrl: 'http://localhost:20128/v1',
   defaultModel: 'ag/gemini-3.8-flash',
   savedModels: ['ag/gemini-3.8-flash', 'ag/claude-sonnet-4-6', 'cx/gpt-6-astra'],
   providers: {
@@ -52,7 +52,7 @@ const DEFAULT_CONFIG: AppConfig = {
       name: '9router Gateway',
       providerType: '9router',
       apiKey: '',
-      baseUrl: 'https://api.9router.com/v1',
+      baseUrl: 'http://localhost:20128/v1',
       models: ['ag/gemini-3.8-flash', 'ag/claude-sonnet-4-6', 'cx/gpt-6-astra'],
     },
     'openai': {
@@ -174,7 +174,7 @@ export function resolveProviderForModel(config: AppConfig, modelName?: string): 
 
   const profile = config.providers?.[provId];
   const apiKey = profile?.apiKey || config.apiKey || process.env.OPENAI_API_KEY || '';
-  const baseUrl = profile?.baseUrl || config.baseUrl || (provId === '9router' ? 'https://api.9router.com/v1' : '');
+  const baseUrl = profile?.baseUrl || config.baseUrl || (provId === '9router' ? 'http://localhost:20128/v1' : '');
 
   return {
     providerId: provId,

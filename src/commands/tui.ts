@@ -707,7 +707,7 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
 
 async function configureAIProviderUI(currentConfig: AppConfig) {
   let provider = currentConfig.provider || '9router';
-  let baseUrl = currentConfig.baseUrl || (provider === '9router' ? 'https://api.9router.com/v1' : '');
+  let baseUrl = currentConfig.baseUrl || (provider === '9router' ? 'http://localhost:20128/v1' : '');
   let defaultModel = currentConfig.defaultModel || 'ag/gemini-3.8-flash';
   let apiKey = currentConfig.apiKey || '';
   let defaultReportDir = currentConfig.defaultReportDir || '.lumio-reviews';
@@ -787,7 +787,7 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
     provider = '9router';
     baseUrl = await input({
       message: '9router Base URL:',
-      default: currentConfig.providers?.['9router']?.baseUrl || currentConfig.baseUrl || 'https://api.9router.com/v1',
+      default: currentConfig.providers?.['9router']?.baseUrl || currentConfig.baseUrl || 'http://localhost:20128/v1',
     });
     defaultModel = await input({
       message: 'Default Model (contoh: ag/gemini-3.8-flash, cx/gpt-6-astra):',
