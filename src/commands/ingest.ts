@@ -5,6 +5,7 @@ import os from 'os';
 import { promises as fs } from 'fs';
 import { scanDocFiles, chunkMarkdown, DocChunk } from '../core/chunker.js';
 import { insertChunks, InsertResult } from '../core/db.js';
+import { createProcessAbortController, clearActiveAbortController } from '../core/nav.js';
 
 export function resolveUserPath(inputPath: string): string {
   let cleaned = inputPath.trim();
@@ -19,8 +20,9 @@ export function isWebUrl(input: string): boolean {
   return /^https?:\/\//i.test(trimmed);
 }
 
-export async function fetchUrlContent(url: string): Promise<{ title: string; content: string }> {
+export async function fetchUrlContent(url: string, signal?: AbortSignal): Promise<{ title: string; content: string }> {
   const res = await fetch(url, {
+    signal,
     headers: {
       'User-Agent': 'Mozilla/5.0 (compatible; LumioBot/2.0; +https://github.com/jagoankode/rag-pr-reviewer)',
       'Accept': 'text/plain, text/markdown, text/html, application/json',
@@ -42,12 +44,18 @@ export async function fetchUrlContent(url: string): Promise<{ title: string; con
 export async function ingestCommand(targetPath: string): Promise<boolean> {
   const trimmed = targetPath.trim();
   const isUrl = isWebUrl(trimmed);
+  const abortController = createProcessAbortController();
 
   if (isUrl) {
-    const spinner = ora(chalk.blue(`Mengambil konten dokumen dari URL: ${trimmed}...`)).start();
+    const spinner = ora(chalk.blue(`Mengambil konten dokumen dari URL: ${trimmed}... (Ctrl+C untuk batalkan)`)).start();
     try {
-      const { title, content } = await fetchUrlContent(trimmed);
+      const { title, content } = await fetchUrlContent(trimmed, abortController.signal);
       const chunks = chunkMarkdown(content, trimmed);
+
+      if (abortController.signal.aborted) {
+        spinner.info(chalk.yellow('\nProses ingest URL dibatalkan.'));
+        return false;
+      }
 
       if (chunks.length === 0) {
         spinner.warn(chalk.yellow('Konten dari URL kosong atau teks tidak cukup panjang untuk diproses.'));
@@ -73,16 +81,27 @@ export async function ingestCommand(targetPath: string): Promise<boolean> {
       }
       return true;
     } catch (error: any) {
+      if (abortController.signal.aborted || error.name === 'AbortError') {
+        spinner.info(chalk.yellow('\nProses ingest URL dibatalkan oleh pengguna.'));
+        return false;
+      }
       spinner.fail(chalk.red(`Gagal meng-ingest dokumen dari URL: ${error.message}`));
       return false;
+    } finally {
+      clearActiveAbortController();
     }
   }
 
   const resolvedPath = resolveUserPath(targetPath);
-  const spinner = ora(chalk.blue(`Scanning files at: ${resolvedPath}...`)).start();
+  const spinner = ora(chalk.blue(`Scanning files at: ${resolvedPath}... (Ctrl+C untuk batalkan)`)).start();
 
   try {
     const files = await scanDocFiles(resolvedPath);
+    if (abortController.signal.aborted) {
+      spinner.info(chalk.yellow('\nProses scanning dokumen dibatalkan.'));
+      return false;
+    }
+
     if (files.length === 0) {
       spinner.warn(chalk.yellow(`Tidak ditemukan file dokumen (.md, .txt) di: ${resolvedPath}`));
       return false;
@@ -92,6 +111,10 @@ export async function ingestCommand(targetPath: string): Promise<boolean> {
 
     let allChunks: DocChunk[] = [];
     for (const file of files) {
+      if (abortController.signal.aborted) {
+        spinner.info(chalk.yellow('\nProses membaca dokumen dibatalkan.'));
+        return false;
+      }
       const content = await fs.readFile(file, 'utf-8');
       const chunks = chunkMarkdown(content, file);
       allChunks.push(...chunks);
@@ -121,8 +144,14 @@ export async function ingestCommand(targetPath: string): Promise<boolean> {
     }
     return true;
   } catch (error: any) {
+    if (abortController.signal.aborted || error.name === 'AbortError') {
+      spinner.info(chalk.yellow('\nProses ingest dibatalkan oleh pengguna.'));
+      return false;
+    }
     spinner.fail(chalk.red(`Gagal meng-ingest dokumen: ${error.message}`));
     return false;
+  } finally {
+    clearActiveAbortController();
   }
 }
 

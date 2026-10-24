@@ -59,11 +59,11 @@ export async function getQdrantClient(): Promise<{ client: QdrantClient; collect
   const url = rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : `https://${rawUrl}`;
   const apiKey = config.qdrantApiKey || undefined;
 
-  if (!qdrantInstance) {
-    const parsedUrl = new URL(url);
-    const defaultPort = parsedUrl.protocol === 'https:' ? 443 : 80;
-    const port = parsedUrl.port ? Number(parsedUrl.port) : defaultPort;
+  const parsedUrl = new URL(url);
+  const defaultPort = parsedUrl.protocol === 'https:' ? 443 : 80;
+  const port = parsedUrl.port ? Number(parsedUrl.port) : defaultPort;
 
+  if (!qdrantInstance) {
     qdrantInstance = new QdrantClient({
       url,
       port,
@@ -87,25 +87,39 @@ export async function getQdrantClient(): Promise<{ client: QdrantClient; collect
   return { client: qdrantInstance, collection };
 }
 
-async function generateVectors(texts: string[]): Promise<number[][]> {
+async function generateVectors(texts: string[], targetDimensions?: number): Promise<number[][]> {
   const { embeddingClient, config } = await getActiveAIProvider();
-  const embModel = config.embeddingModel || 'text-embedding-3-small';
+  const embModel = config.embeddingModel || 'local';
+  const dimensions = targetDimensions || getVectorSize(config);
 
+  // Jika provider 9router atau model diset 'local' atau provider tidak support embeddings:
+  // gunakan built-in deterministic TF-IDF vectorizer (0% dependensi ke remote embedding)
   if (config.provider === '9router' || embModel === 'local') {
-    const vectorizer = createTfIdfIndex(texts);
+    const vectorizer = createTfIdfIndex(texts, dimensions);
     return texts.map((t) => vectorizer(t));
   }
 
   try {
-    const { embeddings } = await embedMany({
+    // Timeout safeguard 12 detik agar tidak menggantung selamanya
+    const embeddingPromise = embedMany({
       model: embeddingClient.embedding(embModel),
       values: texts,
     });
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`Timeout memanggil endpoint embedding ${embModel} (12 detik)`));
+      }, 12000);
+    });
+
+    const { embeddings } = await Promise.race([embeddingPromise, timeoutPromise]);
     return embeddings;
   } catch (err: any) {
-    throw new Error(
-      `Gagal memanggil API embedding (${embModel}): ${err.message || String(err)}.\nPeriksa endpoint Base URL, API Key, atau ganti embedding model ke "local" jika endpoint tidak mendukung embeddings.`
-    );
+    // Fallback otomatis ke local embedder agar penyimpanan tidak pernah hang
+    console.warn(`\n⚠️  Model/Endpoint embedding (${embModel}) tidak merespons: ${err.message}.`);
+    console.warn('⚡ Mengalihkan otomatis ke local text vectorizer agar aturan tetap tersimpan...');
+    const vectorizer = createTfIdfIndex(texts, dimensions);
+    return texts.map((t) => vectorizer(t));
   }
 }
 
@@ -183,8 +197,15 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
       return { insertedCount: 0, duplicateCount: skippedTitles.length, skippedTitles };
     }
 
+    const collInfo = await client.getCollection(collection);
+    const vectorParam = collInfo.config.params.vectors;
+    const requiredDim =
+      typeof vectorParam === 'object' && vectorParam !== null && 'size' in vectorParam
+        ? (vectorParam as any).size
+        : 3072;
+
     const texts = uniqueChunks.map((c) => `${c.title}\n${c.content}`);
-    const vectors = await generateVectors(texts);
+    const vectors = await generateVectors(texts, requiredDim);
 
     const points = uniqueChunks.map((chunk, i) => ({
       id: typeof chunk.id === 'string' && /^[0-9a-fA-F-]+$/.test(chunk.id) ? chunk.id : Math.floor(Math.random() * 1000000000),
@@ -287,6 +308,105 @@ export async function insertGuideline(
     content,
   };
   return await insertChunks([chunk]);
+}
+
+export async function updateGuideline(
+  id: string,
+  newTitle: string,
+  newContent: string,
+  source: string = 'manual_update'
+): Promise<boolean> {
+  const config = await loadConfig();
+
+  if (config.dbType === 'qdrant') {
+    const { client, collection } = await getQdrantClient();
+    const collInfo = await client.getCollection(collection);
+    const vectorParam = collInfo.config.params.vectors;
+    const requiredDim =
+      typeof vectorParam === 'object' && vectorParam !== null && 'size' in vectorParam
+        ? (vectorParam as any).size
+        : 3072;
+
+    const texts = [`${newTitle}\n${newContent}`];
+    const vectors = await generateVectors(texts, requiredDim);
+
+    const pointId = /^[0-9]+$/.test(id) ? Number(id) : id;
+
+    await client.upsert(collection, {
+      wait: true,
+      points: [
+        {
+          id: pointId,
+          vector: vectors[0],
+          payload: {
+            originalId: id,
+            source,
+            title: newTitle,
+            content: newContent,
+            contentHash: getNormHash(newContent),
+          },
+        },
+      ],
+    });
+
+    await syncGuidelinesRules({ force: true, quiet: true });
+    return true;
+  }
+
+  // Local LanceDB Mode
+  const db = await getDb();
+  const tableNames = await db.tableNames();
+  if (!tableNames.includes(TABLE_NAME)) {
+    return false;
+  }
+
+  const table = await db.openTable(TABLE_NAME);
+  // Hapus lalu masukkan yang baru dengan ID yang sama
+  await table.delete(`id = '${id}'`);
+
+  const texts = [`${newTitle}\n${newContent}`];
+  const vectors = await generateVectors(texts);
+
+  await table.add([
+    {
+      id,
+      source,
+      title: newTitle,
+      content: newContent,
+      contentHash: getNormHash(newContent),
+      vector: vectors[0],
+    },
+  ]);
+
+  return true;
+}
+
+export async function deleteGuideline(id: string): Promise<boolean> {
+  const config = await loadConfig();
+
+  if (config.dbType === 'qdrant') {
+    const { client, collection } = await getQdrantClient();
+    const pointId = /^[0-9]+$/.test(id) ? Number(id) : id;
+
+    await client.delete(collection, {
+      wait: true,
+      points: [pointId],
+    });
+
+    await syncGuidelinesRules({ force: true, quiet: true });
+    return true;
+  }
+
+  // Local LanceDB Mode
+  const db = await getDb();
+  const tableNames = await db.tableNames();
+  if (!tableNames.includes(TABLE_NAME)) {
+    return false;
+  }
+
+  const table = await db.openTable(TABLE_NAME);
+  await table.delete(`id = '${id}'`);
+  return true;
 }
 
 /**

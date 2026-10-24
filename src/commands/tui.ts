@@ -8,6 +8,7 @@ import { learnFeatureCommand } from './learn.js';
 import { runInteractiveKnowledgeDialog } from './dialog.js';
 import { isGitRepo, getAvailableBranches, getCurrentBranch } from '../core/git.js';
 import { loadConfig, saveConfig, AppConfig, DatabaseType, ProviderProfile, resolveProviderForModel } from '../core/config.js';
+import { Language, getTranslation } from '../core/i18n.js';
 import { listSavedReports, resolveReportDir, deleteReportFile, clearAllReports } from '../core/history.js';
 import { getAppVersion } from '../core/version.js';
 import { promises as fs } from 'fs';
@@ -26,203 +27,236 @@ function padAnsiEnd(str: string, targetWidth: number): string {
   return str + ' '.repeat(targetWidth - currentLen);
 }
 
-function renderBox(title: string, lines: string[], width: number, borderColor = chalk.cyan): string[] {
-  const innerW = width - 2;
-  const titlePart = title ? `─ ${title} ` : '';
-  const titleLen = stripAnsi(titlePart).length;
-  const remainingTop = Math.max(0, innerW - titleLen);
-  const top = borderColor(`╭${titlePart}${'─'.repeat(remainingTop)}╮`);
-  const bottom = borderColor(`╰${'─'.repeat(innerW)}╯`);
-
-  const body = lines.map((line) => {
-    const rawLen = stripAnsi(line).length;
-    const padding = Math.max(0, width - 4 - rawLen);
-    return borderColor('│ ') + line + ' '.repeat(padding) + borderColor(' │');
-  });
-
-  return [top, ...body, bottom];
-}
-
-async function renderDashboardHeader(config: AppConfig, inRepo: boolean) {
+function renderOpenCodeHeader(config: AppConfig, inRepo: boolean, currentBranch: string) {
+  console.clear();
   const version = getAppVersion();
-  const currentBranch = inRepo ? await getCurrentBranch() : 'no-git';
   const resolved = resolveProviderForModel(config);
-  const reports = await listSavedReports(config.defaultReportDir || '.lumio-reviews');
+  const lang = config.language || 'id';
+  const t = getTranslation(lang);
 
-  const termW = Math.max(76, Math.min(100, process.stdout.columns || 80));
-  const leftW = Math.floor((termW - 2) * 0.48);
-  const rightW = termW - 2 - leftW;
+  const termW = Math.max(60, Math.min(100, process.stdout.columns || 80));
 
-  // 1. Top Header Line: ✨ Lumio v2.4.0 | AI-Powered PR Reviewer           git:(branch)
-  const leftHeader = `${chalk.bold.yellow('✨ Lumio')} ${chalk.bold.cyan(`v${version}`)} ${chalk.gray('|')} ${chalk.gray('AI-Powered PR Reviewer')}`;
-  const rightHeader = inRepo ? chalk.cyan(`git:(${chalk.bold.green(currentBranch)}) ᚶ`) : chalk.gray('git:(offline)');
-  const spaceHeader = Math.max(2, termW - stripAnsi(leftHeader).length - stripAnsi(rightHeader).length);
-  
-  console.log(`${leftHeader}${' '.repeat(spaceHeader)}${rightHeader}\n`);
+  // 1. Sleek Brand Header
+  const brand = `${chalk.bold.hex('#F59E0B')('✨ Lumio')} ${chalk.gray(`v${version}`)}`;
+  const tagline = chalk.gray(t.tagline);
+  const gitBadge = inRepo
+    ? chalk.cyan(`git:(${chalk.bold.green(currentBranch)})`)
+    : chalk.gray('git:(offline)');
 
-  // 2. Left Panel: COMMANDS overview
-  const commandLines = [
-    `${chalk.cyan('🚀 /review  ')} ${chalk.white('Review PR / Git Changes')}`,
-    `${chalk.cyan('💬 /dialog  ')} ${chalk.white('Interactive RAG Chat')}`,
-    `${chalk.cyan('🧠 /learn   ')} ${chalk.white('Audit Local Feature Code')}`,
-    `${chalk.cyan('⚡ /model   ')} ${chalk.white('Ganti Model AI Cepat')}`,
-    `${chalk.cyan('🤖 /provider')} ${chalk.white('Setup AI Provider (9router)')}`,
-    `${chalk.cyan('💾 /db      ')} ${chalk.white('Storage Mode (LanceDB/Qdrant)')}`,
-    `${chalk.cyan('📜 /history ')} ${chalk.white('View Saved Reports')}`,
-    `${chalk.cyan('🚪 /quit    ')} ${chalk.white('Exit Lumio')}`,
-  ];
-  const leftBox = renderBox('COMMANDS', commandLines, leftW, chalk.blue);
+  const topSpace = Math.max(2, termW - stripAnsi(`${brand}  ${tagline}`).length - stripAnsi(gitBadge).length);
+  console.log(`${brand}  ${tagline}${' '.repeat(topSpace)}${gitBadge}`);
 
-  // 3. Right Top Panel: ACTIVE CONTEXT & METRICS
-  const provId = resolved.providerId || 'none';
-  const modelId = config.defaultModel ? chalk.bold.green(config.defaultModel) : chalk.yellow('Belum Diset');
-  const dbStatus =
+  // 2. Minimalist Status Chip Line (OpenCode Style)
+  const provChip = resolved.providerId
+    ? `${chalk.gray(`${t.provider}:`)} ${chalk.bold.yellow(resolved.providerId)}`
+    : `${chalk.gray(`${t.provider}:`)} ${chalk.red(t.unset)}`;
+
+  const modelChip = config.defaultModel
+    ? `${chalk.gray(`${t.model}:`)} ${chalk.bold.cyan(config.defaultModel)}`
+    : `${chalk.gray(`${t.model}:`)} ${chalk.yellow(t.unset)}`;
+
+  const dbChip =
     config.dbType === 'qdrant'
       ? config.qdrantUrl && config.qdrantCollection
-        ? `${chalk.cyan(`Qdrant (${config.qdrantCollection})`)} ${chalk.green('● Online')}`
-        : `${chalk.yellow('Qdrant')} ${chalk.red('● Unset')}`
-      : `${chalk.blue('Local LanceDB')} ${chalk.green('● Ready')}`;
+        ? `${chalk.gray(`${t.db}:`)} ${chalk.green(`qdrant[${config.qdrantCollection}]`)}`
+        : `${chalk.gray(`${t.db}:`)} ${chalk.yellow('qdrant[unconfigured]')}`
+      : `${chalk.gray(`${t.db}:`)} ${chalk.blue('lancedb[local]')}`;
 
-  const contextLines = [
-    `• Provider: ${chalk.bold.bgCyan.black(` ${provId} `)}`,
-    `• Active Model: ${modelId}`,
-    `• Vector DB: ${dbStatus}`,
-    `• Git Target: ${inRepo ? chalk.cyan(currentBranch) : chalk.gray('Not a git repository')}`,
-  ];
-  const rightTopBox = renderBox('ACTIVE CONTEXT & METRICS', contextLines, rightW, chalk.cyan);
+  const langChip = `${chalk.gray('lang:')} ${chalk.bold.magenta(lang.toUpperCase())}`;
 
-  // 4. Right Bottom Panel: LAST AUDIT STATUS
-  let auditLines: string[] = [];
-  if (reports.length > 0) {
-    const last = reports[0];
-    auditLines = [
-      `Last report: ${chalk.white(last.filename.slice(0, rightW - 17))}`,
-      `${chalk.green('✔')} ${reports.length} report review tersimpan di history.`,
-    ];
-  } else {
-    auditLines = [
-      'No critical issues found in recent review.',
-      chalk.gray('Belum ada audit tersimpan. Jalankan /review.'),
-    ];
-  }
-  const rightBottomBox = renderBox('LAST AUDIT STATUS', auditLines, rightW, chalk.magenta);
-
-  const rightCombined = [...rightTopBox, ...rightBottomBox];
-
-  // Print 2 columns side by side
-  const totalRows = Math.max(leftBox.length, rightCombined.length);
-  for (let i = 0; i < totalRows; i++) {
-    const leftText = padAnsiEnd(leftBox[i] || '', leftW);
-    const rightText = rightCombined[i] || '';
-    console.log(`${leftText}  ${rightText}`);
-  }
-  console.log('');
+  console.log(`${chalk.gray('─'.repeat(termW))}`);
+  console.log(` ${provChip}  ${chalk.gray('•')}  ${modelChip}  ${chalk.gray('•')}  ${dbChip}  ${chalk.gray('•')}  ${langChip}`);
+  console.log(`${chalk.gray('─'.repeat(termW))}\n`);
 }
 
 function printHeader(breadcrumb: string) {
   console.clear();
   const version = getAppVersion();
-  const banner = boxen(
-    `${chalk.bold.cyan('✨ Lumio')} ${chalk.gray(`v${version}`)}\n${chalk.gray(
-      'AI-Powered PR Reviewer & Centralized Knowledge Engine'
-    )}\n\n${chalk.bold.yellow(`📍 ${breadcrumb}`)}`,
-    {
-      padding: 1,
-      margin: { top: 0, bottom: 1, left: 1, right: 1 },
-      borderStyle: 'round',
-      borderColor: 'cyan',
-      textAlignment: 'center',
-    }
-  );
-  console.log(banner);
+  console.log(`${chalk.bold.hex('#F59E0B')('✨ Lumio')} ${chalk.gray(`v${version}`)} ${chalk.gray('›')} ${chalk.bold.yellow(breadcrumb)}\n`);
 }
 
 export async function runInteractiveTUI() {
   while (true) {
-    console.clear();
     const inRepo = await isGitRepo();
+    const currentBranch = inRepo ? await getCurrentBranch() : 'no-git';
     const config = await loadConfig();
+    const lang = config.language || 'id';
+    const t = getTranslation(lang);
 
-    await renderDashboardHeader(config, inRepo);
+    renderOpenCodeHeader(config, inRepo, currentBranch);
+
+    if (!inRepo) {
+      console.log(chalk.yellow(t.notGitRepoWarn));
+    }
 
     const mainChoice = await select({
-      message: chalk.cyan('> Select command or type action:'),
+      isRootMenu: true,
+      message: t.chooseAction,
       choices: [
         {
-          name: `${chalk.bold.cyan('🚀 /review    ')} ${chalk.white('Review Git Changes / PR Branch')}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t.menuReviewTitle, 26))} ${chalk.gray(t.menuReviewDesc)}`,
           value: 'review',
           disabled: !inRepo ? '(Bukan git repo)' : false,
         },
         {
-          name: `${chalk.bold.cyan('💬 /dialog    ')} ${chalk.white('Interactive RAG Chat (Tanya Jawab Aturan)')}`,
-          value: 'dialog',
+          name: `${chalk.bold.cyan(padAnsiEnd(t.menuKnowledgeTitle, 26))} ${chalk.gray(t.menuKnowledgeDesc)}`,
+          value: 'knowledge_base',
         },
         {
-          name: `${chalk.bold.cyan('🧠 /learn     ')} ${chalk.white('Learn from Local Feature Code (Audit Scaffold)')}`,
-          value: 'learn_code',
-        },
-        {
-          name: `${chalk.bold.cyan('⚡ /model     ')} ${chalk.white('Ganti Model AI Cepat (Switch / Reset)')}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t.menuModelTitle, 26))} ${chalk.gray(t.menuModelDesc)}`,
           value: 'quick_switch_model',
         },
         {
-          name: `${chalk.bold.cyan('⚙️  /provider  ')} ${chalk.white('Configure AI Provider & Credentials')}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t.menuProviderTitle, 26))} ${chalk.gray(t.menuProviderDesc)}`,
           value: 'config_ai',
         },
         {
-          name: `${chalk.bold.cyan('💾 /db        ')} ${chalk.white('Database Storage Mode (VPS Qdrant / LanceDB)')}`,
-          value: 'config_db',
-        },
-        {
-          name: `${chalk.bold.cyan('📖 /rules     ')} ${chalk.white('Inspect Active Rules in Vector DB')}`,
-          value: 'inspect_rules',
-        },
-        {
-          name: `${chalk.bold.cyan('📚 /ingest    ')} ${chalk.white('Ingest Knowledge / Conventions ke Vector DB')}`,
-          value: 'ingest',
-        },
-        {
-          name: `${chalk.bold.cyan('📜 /history   ')} ${chalk.white('View & Manage Review History')}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t.menuHistoryTitle, 26))} ${chalk.gray(t.menuHistoryDesc)}`,
           value: 'history',
         },
         {
-          name: `${chalk.bold.cyan('📊 /status    ')} ${chalk.white('Check Environment & System Status')}`,
-          value: 'status',
+          name: `${chalk.bold.cyan(padAnsiEnd(t.menuSettingsTitle, 26))} ${chalk.gray(t.menuSettingsDesc)}`,
+          value: 'settings',
         },
         {
-          name: `${chalk.bold.red('🚪 /quit      ')} ${chalk.red('Exit Lumio')}`,
+          name: chalk.red(t.menuExit),
           value: 'exit',
         },
       ],
     });
 
     if (mainChoice === 'exit') {
-      console.log(chalk.gray('\nSampai jumpa, Bos! 👋\n'));
+      console.log(chalk.gray(`\n${t.goodbye}`));
       process.exit(0);
     }
 
-    if (mainChoice === 'dialog') {
-      await runInteractiveKnowledgeDialog();
+    if (mainChoice === 'knowledge_base') {
+      await knowledgeBaseMenuUI(config);
+    } else if (mainChoice === 'settings') {
+      await settingsMenuUI(config, inRepo);
     } else if (mainChoice === 'review') {
       await reviewWorkflowUI(config);
-    } else if (mainChoice === 'learn_code') {
-      await learnWorkflowUI(config);
-    } else if (mainChoice === 'inspect_rules') {
-      await inspectGuidelinesCommand();
-    } else if (mainChoice === 'ingest') {
-      await ingestWorkflowUI();
-    } else if (mainChoice === 'config_db') {
-      await configureDatabaseUI(config);
     } else if (mainChoice === 'history') {
       await viewHistoryUI(config.defaultReportDir || '.lumio-reviews');
     } else if (mainChoice === 'quick_switch_model') {
       await quickSwitchModelUI(config);
     } else if (mainChoice === 'config_ai') {
       await configureAIProviderUI(config);
-    } else if (mainChoice === 'status') {
-      await showStatusUI(inRepo, config);
     }
   }
+}
+
+async function settingsMenuUI(config: AppConfig, inRepo: boolean) {
+  while (true) {
+    const freshConfig = await loadConfig();
+    const lang = freshConfig.language || 'id';
+    const t = getTranslation(lang);
+    printHeader(t.settingsMenuTitle);
+
+    const settingChoice = await select({
+      message: t.chooseAction,
+      choices: [
+        {
+          name: `${chalk.bold.cyan(padAnsiEnd(t.settingStatusTitle, 32))} ${chalk.gray(t.settingStatusDesc)}`,
+          value: 'status',
+        },
+        {
+          name: `${chalk.bold.cyan(padAnsiEnd(t.settingLangTitle, 32))} ${chalk.gray(t.settingLangDesc)}`,
+          value: 'language',
+        },
+        {
+          name: `${chalk.bold.cyan(padAnsiEnd(t.settingDbTitle, 32))} ${chalk.gray(t.settingDbDesc)}`,
+          value: 'database',
+        },
+      ],
+    });
+
+    if (settingChoice === 'back') {
+      return;
+    }
+
+    if (settingChoice === 'status') {
+      await showStatusUI(inRepo, freshConfig);
+    } else if (settingChoice === 'language') {
+      await switchLanguageUI(freshConfig);
+    } else if (settingChoice === 'database') {
+      await configureDatabaseUI(freshConfig);
+    }
+  }
+}
+
+async function knowledgeBaseMenuUI(config: AppConfig) {
+  while (true) {
+    const lang = config.language || 'id';
+    const t = getTranslation(lang);
+    printHeader(t.kbMenuTitle);
+
+    const kbChoice = await select({
+      message: t.chooseAction,
+      choices: [
+        {
+          name: `${chalk.bold.cyan(padAnsiEnd(t.kbDialogTitle, 38))} ${chalk.gray(t.kbDialogDesc)}`,
+          value: 'dialog',
+        },
+        {
+          name: `${chalk.bold.cyan(padAnsiEnd(t.kbInspectTitle, 38))} ${chalk.gray(t.kbInspectDesc)}`,
+          value: 'inspect_rules',
+        },
+        {
+          name: `${chalk.bold.cyan(padAnsiEnd(t.kbLearnTitle, 38))} ${chalk.gray(t.kbLearnDesc)}`,
+          value: 'learn_code',
+        },
+        {
+          name: `${chalk.bold.cyan(padAnsiEnd(t.kbIngestTitle, 38))} ${chalk.gray(t.kbIngestDesc)}`,
+          value: 'ingest',
+        },
+      ],
+    });
+
+    if (kbChoice === 'back') {
+      return;
+    }
+
+    if (kbChoice === 'dialog') {
+      await runInteractiveKnowledgeDialog();
+    } else if (kbChoice === 'inspect_rules') {
+      await inspectGuidelinesCommand();
+    } else if (kbChoice === 'learn_code') {
+      await learnWorkflowUI(config);
+    } else if (kbChoice === 'ingest') {
+      await ingestWorkflowUI();
+    }
+  }
+}
+
+async function switchLanguageUI(currentConfig: AppConfig) {
+  printHeader('Menu Utama > 🌐 Language / Bahasa');
+  const currentLang = currentConfig.language || 'id';
+
+  const chosenLang = await select<Language | 'back'>({
+    message: 'Pilih bahasa tampilan (Select display language):',
+    choices: [
+      {
+        name: currentLang === 'id' ? '🇮🇩 Bahasa Indonesia (Aktif)' : '🇮🇩 Bahasa Indonesia',
+        value: 'id',
+      },
+      {
+        name: currentLang === 'en' ? '🇬🇧 English (Active)' : '🇬🇧 English',
+        value: 'en',
+      },
+    ],
+  });
+
+  if (chosenLang === 'back') return;
+
+  const updatedConfig: AppConfig = {
+    ...currentConfig,
+    language: chosenLang,
+  };
+  await saveConfig(updatedConfig);
+  const t = getTranslation(chosenLang);
+  console.log(chalk.green(`\n${t.langSwitched}\n`));
+  await waitBackPrompt();
 }
 
 async function configureDatabaseUI(currentConfig: AppConfig) {
@@ -245,10 +279,6 @@ async function configureDatabaseUI(currentConfig: AppConfig) {
         name: '💻 Local LanceDB (Personal / Offline Mode)',
         value: 'local',
         description: 'Menyimpan & menarik aturan secara lokal di disk laptop (~/.lumio/db)',
-      },
-      {
-        name: '🔙 Batalkan & Kembali ke Menu Utama',
-        value: 'back',
       },
     ],
   });
@@ -303,13 +333,12 @@ async function configureDatabaseUI(currentConfig: AppConfig) {
       choices: [
         { name: '✅ Ya, Simpan & Terapkan', value: 'save' },
         ...(selectedMode === 'qdrant' ? [{ name: '✏️  Koreksi URL / Collection / Key (Edit Typo)', value: 'edit' }] : []),
-        { name: '🔙 Batalkan & Kembali ke Menu Utama', value: 'cancel' },
       ],
     });
 
     if (dbConfirm === 'cancel' || dbConfirm === 'back') {
       console.log(chalk.gray('\nPengaturan database dibatalkan.\n'));
-      await pressEnterToContinue();
+      await waitBackPrompt();
       return;
     }
 
@@ -324,7 +353,7 @@ async function configureDatabaseUI(currentConfig: AppConfig) {
 
       await saveConfig(updatedConfig);
       console.log(chalk.green(`\n✔ Database storage mode berhasil dialihkan ke: ${selectedMode === 'qdrant' ? '🌐 VPS Qdrant' : '💻 Local LanceDB'}\n`));
-      await pressEnterToContinue();
+      await waitBackPrompt();
       return;
     }
 
@@ -387,10 +416,6 @@ async function reviewWorkflowUI(config: AppConfig) {
         name: '📦 Staged changes only (Perubahan yang sudah di git add)',
         value: 'staged',
       },
-      {
-        name: '🔙 Batalkan & Kembali ke Menu Utama',
-        value: 'back',
-      },
     ],
   });
 
@@ -406,7 +431,6 @@ async function reviewWorkflowUI(config: AppConfig) {
       choices: [
         { name: '✅ Ya, fetch remote terbaru sekarang', value: 'yes' },
         { name: '⏩ Lewati fetch (gunakan cache branch lokal saat ini)', value: 'no' },
-        { name: '🔙 Batalkan review & kembali', value: 'back' },
       ],
     });
 
@@ -423,7 +447,7 @@ async function reviewWorkflowUI(config: AppConfig) {
       : 'origin/master';
 
     const rawTarget = await input({
-      message: 'Target/Base Branch (tujuan PR, atau ketik "b" untuk batal):',
+      message: 'Target/Base Branch (tujuan PR):',
       default: defaultTarget,
     });
     if (rawTarget.trim().toLowerCase() === 'b' || rawTarget.trim().toLowerCase() === 'back') return;
@@ -431,7 +455,7 @@ async function reviewWorkflowUI(config: AppConfig) {
 
     const defaultSource = currentBranch !== 'HEAD' ? currentBranch : allBranches[0] || 'HEAD';
     const rawSource = await input({
-      message: 'Source/Feature Branch (cabang yang mau direview, atau ketik "b" untuk batal):',
+      message: 'Source/Feature Branch (cabang yang mau direview):',
       default: defaultSource,
     });
     if (rawSource.trim().toLowerCase() === 'b' || rawSource.trim().toLowerCase() === 'back') return;
@@ -461,7 +485,7 @@ async function reviewWorkflowUI(config: AppConfig) {
     saveReport: true,
   });
 
-  await pressEnterToContinue();
+  await waitBackPrompt();
 }
 
 async function learnWorkflowUI(config: AppConfig) {
@@ -469,7 +493,7 @@ async function learnWorkflowUI(config: AppConfig) {
   console.log(chalk.gray('AI akan membedah source code lokal dari hulu ke hilir untuk mempelajari pola arsitektur.\n'));
 
   const folderPath = await input({
-    message: 'Masukkan path folder/route lokal (atau ketik "b" untuk kembali):',
+    message: 'Masukkan path folder/route lokal:',
     default: './src',
   });
 
@@ -477,7 +501,7 @@ async function learnWorkflowUI(config: AppConfig) {
 
   console.log('');
   await learnFeatureCommand(folderPath.trim(), config.defaultModel);
-  await pressEnterToContinue();
+  await waitBackPrompt();
 }
 
 async function ingestWorkflowUI() {
@@ -494,10 +518,6 @@ async function ingestWorkflowUI() {
         name: '💬 Input Form Aturan Baru (Judul + Isi Text)',
         value: 'interactive',
       },
-      {
-        name: '🔙 Batalkan & Kembali ke Menu Utama',
-        value: 'back',
-      },
     ],
   });
 
@@ -505,7 +525,7 @@ async function ingestWorkflowUI() {
 
   if (ingestType === 'file') {
     const docPath = await input({
-      message: 'Masukkan path file/folder dokumen atau Web URL (atau ketik "b" untuk batal):',
+      message: 'Masukkan path file/folder dokumen atau Web URL:',
       default: './docs',
     });
 
@@ -515,12 +535,12 @@ async function ingestWorkflowUI() {
     await ingestCommand(docPath.trim());
   } else if (ingestType === 'interactive') {
     const title = await input({
-      message: 'Judul aturan / pengetahuan (atau "b" untuk batal):',
+      message: 'Judul aturan / pengetahuan:',
     });
     if (!title.trim() || title.trim().toLowerCase() === 'b' || title.trim().toLowerCase() === 'back') return;
 
     const content = await input({
-      message: 'Isi aturan atau instruksi convention (atau "b" untuk batal):',
+      message: 'Isi aturan atau instruksi convention:',
     });
     if (!content.trim() || content.trim().toLowerCase() === 'b' || content.trim().toLowerCase() === 'back') return;
 
@@ -528,14 +548,14 @@ async function ingestWorkflowUI() {
     await ingestDirectRuleCommand(title.trim(), content.trim());
   }
 
-  await pressEnterToContinue();
+  await waitBackPrompt();
 }
 
 async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
   printHeader('Menu Utama > 📜 Review History');
 
   const customDir = await input({
-    message: 'Folder laporan markdown yang ingin dikelola (atau "b" untuk kembali):',
+    message: 'Folder laporan markdown yang ingin dikelola:',
     default: defaultDir,
   });
 
@@ -546,7 +566,7 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
 
   if (reports.length === 0) {
     console.log(chalk.yellow(`\nBelum ada history review yang tersimpan di ${resolved}\n`));
-    await pressEnterToContinue();
+    await waitBackPrompt();
     return;
   }
 
@@ -554,7 +574,7 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
     const refreshedReports = await listSavedReports(resolved);
     if (refreshedReports.length === 0) {
       console.log(chalk.yellow(`\nSemua laporan di ${resolved} sudah kosong.\n`));
-      await pressEnterToContinue();
+      await waitBackPrompt();
       return;
     }
 
@@ -564,7 +584,6 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
     }));
 
     choices.push({ name: chalk.red('🗑️  Hapus SEMUA report di folder ini'), value: 'clear_all' });
-    choices.push({ name: '🔙 Kembali ke Menu Utama', value: 'back' });
 
     const chosenAction = await select({
       message: `Pilih laporan review di ${chalk.yellow(resolved)}:`,
@@ -599,7 +618,7 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
       console.log(chalk.bold.cyan('\n═════════════════════ SAVED REVIEW REPORT ═════════════════════\n'));
       console.log(chalk.white(content));
       console.log(chalk.bold.cyan('\n═══════════════════════════════════════════════════════════════\n'));
-      await pressEnterToContinue();
+      await waitBackPrompt();
     } else if (fileAction === 'delete') {
       const confirmDelete = await confirm({
         message: `Hapus file ini secara permanen?`,
@@ -638,7 +657,6 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
       ...(savedModels.length > 0 ? [{ name: '🗑️  Hapus Model dari Daftar', value: 'delete' }] : []),
       ...(activeModel ? [{ name: '⏸️  Kosongkan Model Aktif (Nonaktifkan)', value: 'clear_active' }] : []),
       ...(savedModels.length > 0 ? [{ name: '🧹 Kosongkan Semua Model (Reset Daftar Model)', value: 'clear_all' }] : []),
-      { name: '🔙 Kembali ke Menu Utama', value: 'back' },
     ];
 
     const action = await select({
@@ -659,7 +677,7 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
       };
       await saveConfig(updatedConfig);
       console.log(chalk.yellow(`\n✔ Model aktif berhasil dikosongkan.\n`));
-      await pressEnterToContinue();
+      await waitBackPrompt();
       continue;
     }
 
@@ -679,7 +697,7 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
         };
         await saveConfig(updatedConfig);
         console.log(chalk.green(`\n✔ Semua model berhasil dihapus. Daftar model sekarang kosong.\n`));
-        await pressEnterToContinue();
+        await waitBackPrompt();
       }
       continue;
     }
@@ -700,14 +718,21 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
       await saveConfig(updatedConfig);
       console.log(chalk.green(`\n✔ Model aktif berhasil diganti ke: ${chalk.bold(activeModel)}`));
       console.log(chalk.cyan(`✔ Provider aktif otomatis berganti ke: ${chalk.bold.yellow(targetResolved.providerId)}\n`));
-      await pressEnterToContinue();
+      await waitBackPrompt();
       return;
     }
 
     if (action === 'add') {
       const newModelName = await input({
-        message: 'Masukkan nama model baru (contoh: ag/claude-sonnet-4-6, deepseek-r1):',
-        validate: (v) => (v.trim().length > 0 ? true : 'Nama model tidak boleh kosong'),
+        message: 'Masukkan nama model AI chat/completion baru (contoh: ag/gemini-3.8-flash, gpt-4o, claude-sonnet-5):',
+        validate: (v) => {
+          const trimmed = v.trim();
+          if (trimmed.length === 0) return 'Nama model tidak boleh kosong';
+          if (trimmed.toLowerCase().includes('embedding')) {
+            return 'Peringatan: Model ini adalah embedding model. Di menu ini hanya untuk model AI Chat / Review LLM!';
+          }
+          return true;
+        },
       });
 
       if (newModelName && newModelName !== 'back') {
@@ -788,7 +813,7 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
         };
         await saveConfig(updatedConfig);
         console.log(chalk.green(`\n✔ Model ${chalk.bold(trimmed)} ditambahkan ke provider ${chalk.bold.yellow(targetProvider)} dan dijadikan model aktif!\n`));
-        await pressEnterToContinue();
+        await waitBackPrompt();
       }
     }
 
@@ -828,7 +853,7 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
         };
         await saveConfig(updatedConfig);
         console.log(chalk.green(`\n✔ Model ${chalk.bold(modelToDelete)} berhasil dihapus dari daftar.\n`));
-        await pressEnterToContinue();
+        await waitBackPrompt();
       }
     }
   }
@@ -851,7 +876,6 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
         { name: '✏️  Pilih / Edit Konfigurasi Provider Terdaftar', value: 'edit' },
         { name: '➕ Tambah Provider Baru (Custom / Proxy / Official)', value: 'add' },
         ...(existingProviders.length > 0 ? [{ name: '🗑️  Hapus Provider Terdaftar', value: 'delete' }] : []),
-        { name: '🔙 Kembali ke Menu Utama', value: 'back' },
       ],
     });
 
@@ -914,7 +938,7 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
           };
           await saveConfig(currentConfig);
           console.log(chalk.green(`\n✔ Provider [${chalk.bold(providerToDelete)}] berhasil dihapus!\n`));
-          await pressEnterToContinue();
+          await waitBackPrompt();
         }
       }
       continue;
@@ -970,7 +994,7 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
         customProviderName = '9router Gateway';
         baseUrl = await input({
           message: '9router Base URL:',
-          default: 'http://localhost:20128/v1',
+          default: 'http://127.0.0.1:20129/v1',
         });
         defaultModel = 'ag/gemini-3.8-flash';
         embeddingModel = 'local';
@@ -1008,7 +1032,7 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
 
       if (providerListChoices.length === 0) {
         console.log(chalk.yellow('\n⚠️  Belum ada provider yang terdaftar. Silakan pilih "Tambah Provider Baru".\n'));
-        await pressEnterToContinue();
+        await waitBackPrompt();
         continue;
       }
 
@@ -1083,7 +1107,7 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
 
       if (reviewAction === 'cancel' || reviewAction === 'back') {
         console.log(chalk.gray('\nPerubahan konfigurasi AI dibatalkan.\n'));
-        await pressEnterToContinue();
+        await waitBackPrompt();
         break;
       }
 
@@ -1123,7 +1147,7 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
         };
         await saveConfig(currentConfig);
         console.log(chalk.green(`\n✔ Konfigurasi provider [${chalk.bold(provider)}] berhasil disimpan!\n`));
-        await pressEnterToContinue();
+        await waitBackPrompt();
         break;
       }
 
@@ -1200,11 +1224,17 @@ async function showStatusUI(inRepo: boolean, config: AppConfig) {
   console.log(`API Key Status   : ${resolved.apiKey ? chalk.green('Configured ✅') : chalk.red('Missing ❌')}`);
   console.log(chalk.cyan('───────────────────────────────────────\n'));
 
-  await pressEnterToContinue();
+  await waitBackPrompt();
 }
 
-async function pressEnterToContinue() {
-  await input({
-    message: chalk.gray('Tekan [Enter] untuk kembali ke Menu Utama...'),
+async function waitBackPrompt() {
+  await select({
+    message: 'Aksi:',
+    choices: [
+      {
+        name: chalk.yellow('🔙 esc back'),
+        value: 'back',
+      },
+    ],
   });
 }

@@ -28,21 +28,32 @@ export async function callLLM(prompt: string, modelOverride?: string, signal?: A
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers,
-    signal,
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      stream: true, // stream: true menjamin 100% kompatibel dengan 9router SSE maupun OpenAI direct
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers,
+      signal,
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        stream: true, // stream: true menjamin 100% kompatibel dengan 9router SSE maupun OpenAI direct
+      }),
+    });
+  } catch (netErr: any) {
+    if (signal?.aborted || netErr.name === 'AbortError') {
+      throw netErr;
+    }
+    const causeMsg = netErr.cause?.message || netErr.cause?.code || netErr.message;
+    throw new Error(
+      `Gagal terhubung ke AI Endpoint (${url}): ${causeMsg}. Pastikan provider/daemon aktif atau ubah base URL di menu Setting.`
+    );
+  }
 
   if (!res.ok) {
     const errorText = await res.text();

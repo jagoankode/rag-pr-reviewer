@@ -93,7 +93,6 @@ async function withEscapeHandler<T>(
     return await promptFn(ac.signal);
   } catch (err: any) {
     if (isPromptExitError(err)) {
-      console.log(chalk.gray('\n[Aksi dibatalkan via Esc, kembali]'));
       return fallbackValue;
     }
     throw err;
@@ -106,27 +105,52 @@ async function withEscapeHandler<T>(
 
 /**
  * Drop-in safe replacement untuk select() dengan keyboard ESC support
+ * loop: false agar navigasi menu tidak looping tak terbatas (infinite wrap)
+ * isRootMenu: jika true (misal menu utama), footer hanya menampilkan navigasi tanpa 'esc back'
  */
 export async function select<T>(
-  options: Parameters<typeof inqSelect<T>>[0],
+  options: Parameters<typeof inqSelect<T>>[0] & { isRootMenu?: boolean },
   fallbackValue: T = 'back' as unknown as T
 ): Promise<T> {
+  const isRoot = options.isRootMenu;
+  const helpTipText = isRoot
+    ? chalk.gray('↑↓ navigate • ⏎ select')
+    : chalk.gray('esc back • ↑↓ navigate • ⏎ select');
+
+  const { isRootMenu, ...inqOptions } = options;
+
+  const mergedOptions = {
+    loop: false,
+    ...inqOptions,
+    theme: {
+      ...inqOptions.theme,
+      style: {
+        keysHelpTip: () => helpTipText,
+        ...inqOptions.theme?.style,
+      },
+    },
+  };
   return withEscapeHandler(
-    (signal) => inqSelect<T>(options, { signal }),
+    (signal) => inqSelect<T>(mergedOptions, { signal }),
     fallbackValue
   );
 }
 
 /**
  * Drop-in safe replacement untuk input() dengan keyboard ESC support
- * Tetap menangani ketikan 'b' atau 'back' sebagai sinyal kembali alternatif.
+ * Otomatis menyematkan hint seragam "(esc back)" di akhir message
  */
 export async function input(
   options: Parameters<typeof inqInput>[0],
   fallbackValue: string = 'back'
 ): Promise<string> {
+  const rawMsg = options.message.trim();
+  const uniformMessage = rawMsg.includes('esc') || rawMsg.includes('Esc')
+    ? rawMsg
+    : `${rawMsg} ${chalk.gray('(esc back)')}`;
+
   return withEscapeHandler(async (signal) => {
-    const val = await inqInput(options, { signal });
+    const val = await inqInput({ ...options, message: uniformMessage }, { signal });
     const trimmed = (val || '').trim().toLowerCase();
     if (trimmed === 'b' || trimmed === 'back') {
       return fallbackValue;
@@ -142,21 +166,32 @@ export async function confirm(
   options: Parameters<typeof inqConfirm>[0],
   fallbackValue: boolean = false
 ): Promise<boolean> {
+  const rawMsg = options.message.trim();
+  const uniformMessage = rawMsg.includes('esc') || rawMsg.includes('Esc')
+    ? rawMsg
+    : `${rawMsg} ${chalk.gray('(esc back)')}`;
+
   return withEscapeHandler(
-    (signal) => inqConfirm(options, { signal }),
+    (signal) => inqConfirm({ ...options, message: uniformMessage }, { signal }),
     fallbackValue
   );
 }
 
 /**
  * Drop-in safe replacement untuk password() dengan keyboard ESC support
+ * Otomatis menyematkan hint seragam "(esc back)" di akhir message
  */
 export async function password(
   options: Parameters<typeof inqPassword>[0],
   fallbackValue: string = 'back'
 ): Promise<string> {
+  const rawMsg = options.message.trim();
+  const uniformMessage = rawMsg.includes('esc') || rawMsg.includes('Esc')
+    ? rawMsg
+    : `${rawMsg} ${chalk.gray('(esc back)')}`;
+
   return withEscapeHandler(async (signal) => {
-    const val = await inqPassword(options, { signal });
+    const val = await inqPassword({ ...options, message: uniformMessage }, { signal });
     const trimmed = (val || '').trim().toLowerCase();
     if (trimmed === 'b' || trimmed === 'back') {
       return fallbackValue;

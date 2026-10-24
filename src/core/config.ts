@@ -3,6 +3,8 @@ import path from 'path';
 import os from 'os';
 import { createOpenAI } from '@ai-sdk/openai';
 
+import { Language } from './i18n.js';
+
 export type DatabaseType = 'local' | 'qdrant';
 
 export interface ProviderProfile {
@@ -15,6 +17,7 @@ export interface ProviderProfile {
 }
 
 export interface AppConfig {
+  language?: Language;
   provider?: string; // id provider yang sedang aktif (e.g. '9router', 'openai', atau nama custom)
   apiKey?: string;
   baseUrl?: string;
@@ -41,9 +44,10 @@ export function getConfigDir(): string {
 }
 
 const DEFAULT_CONFIG: AppConfig = {
+  language: 'id',
   provider: '9router',
   apiKey: '',
-  baseUrl: 'http://localhost:20128/v1',
+  baseUrl: 'http://127.0.0.1:20129/v1',
   defaultModel: 'ag/gemini-3.8-flash',
   savedModels: ['ag/gemini-3.8-flash', 'ag/claude-sonnet-4-6', 'cx/gpt-6-astra'],
   providers: {
@@ -52,7 +56,7 @@ const DEFAULT_CONFIG: AppConfig = {
       name: '9router Gateway',
       providerType: '9router',
       apiKey: '',
-      baseUrl: 'http://localhost:20128/v1',
+      baseUrl: 'http://127.0.0.1:20129/v1',
       models: ['ag/gemini-3.8-flash', 'ag/claude-sonnet-4-6', 'cx/gpt-6-astra'],
     },
     'openai': {
@@ -155,7 +159,7 @@ export function resolveProviderForModel(config: AppConfig, modelName?: string): 
 
   const profile = config.providers?.[provId];
   const apiKey = profile?.apiKey || config.apiKey || process.env.OPENAI_API_KEY || '';
-  const baseUrl = profile?.baseUrl || config.baseUrl || (provId === '9router' ? 'http://localhost:20128/v1' : '');
+  const baseUrl = profile?.baseUrl || config.baseUrl || (provId === '9router' ? 'http://127.0.0.1:20129/v1' : '');
 
   return {
     providerId: provId,

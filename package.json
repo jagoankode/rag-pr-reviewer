@@ -1,6 +1,6 @@
 {
   "name": "lumio",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "✨ Lumio — AI-Powered PR Reviewer & Centralized Knowledge Engine",
   "main": "dist/index.js",
   "bin": {
@@ -10,7 +10,8 @@
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --minify --packages=external",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "test": "tsx --test tests/**/*.test.ts"
   },
   "files": [
     "dist"

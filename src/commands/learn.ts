@@ -4,6 +4,7 @@ import path from 'path';
 import { scanFeatureCodeFiles, CodeFileContext } from '../core/code-scanner.js';
 import { MinedConventionsSchema, MinedConventions } from '../core/learn-schema.js';
 import { loadConfig } from '../core/config.js';
+import { setActiveAbortController, createProcessAbortController, clearActiveAbortController } from '../core/nav.js';
 import { callLLM } from '../core/llm-client.js';
 import { insertChunks, InsertResult } from '../core/db.js';
 import { DocChunk } from '../core/chunker.js';
@@ -49,10 +50,16 @@ function extractMinedResult(rawText: string): MinedConventions {
 
 export async function learnFeatureCommand(targetPath: string, modelOverride?: string): Promise<boolean> {
   const resolved = resolveUserPath(targetPath);
-  const spinner = ora(chalk.blue(`Memindai source code di ${resolved}...`)).start();
+  const abortController = createProcessAbortController();
+  const spinner = ora(chalk.blue(`Memindai source code di ${resolved}... (Ctrl+C untuk batalkan)`)).start();
 
   try {
     const files: CodeFileContext[] = await scanFeatureCodeFiles(resolved, 15, 25000);
+
+    if (abortController.signal.aborted) {
+      spinner.info(chalk.yellow('\nProses scan dibatalkan.'));
+      return false;
+    }
 
     if (files.length === 0) {
       spinner.warn(chalk.yellow(`Tidak ditemukan file source code yang didukung di: ${resolved}`));
@@ -69,7 +76,7 @@ export async function learnFeatureCommand(targetPath: string, modelOverride?: st
     const config = await loadConfig();
     const modelName = modelOverride || config.defaultModel || 'ag/gemini-3.8-flash';
 
-    spinner.text = chalk.magenta(`Menganalisis pola arsitektur & aturan coding via AI (${modelName})...`);
+    spinner.text = chalk.magenta(`Menganalisis pola arsitektur & aturan coding via AI (${modelName})... (Ctrl+C: Batal)`);
 
     const prompt = `You are a Principal Software Architect.
 Analyze the following source code files from a local feature/module folder (${path.basename(resolved)}).
@@ -101,7 +108,21 @@ Source Code from folder:
 ${codeContext}
 `;
 
-    const rawAIResponse = await callLLM(prompt, modelName);
+    let rawAIResponse = '';
+    try {
+      rawAIResponse = await callLLM(prompt, modelName, abortController.signal);
+    } catch (callErr: any) {
+      if (abortController.signal.aborted || callErr.name === 'AbortError') {
+        spinner.info(chalk.yellow('\nAnalisis AI dibatalkan oleh pengguna.'));
+        return false;
+      }
+      throw callErr;
+    }
+
+    if (abortController.signal.aborted) {
+      spinner.info(chalk.yellow('\nProses dibatalkan oleh pengguna.'));
+      return false;
+    }
     const mined = extractMinedResult(rawAIResponse);
 
     spinner.succeed(chalk.green(`Selesai menganalisis fitur "${mined.featureName}"! Ditemukan ${mined.rules.length} aturan konvensi.\n`));
@@ -146,7 +167,13 @@ ${codeContext}
 
     return true;
   } catch (error: any) {
+    if (abortController.signal.aborted || error.name === 'AbortError') {
+      spinner.info(chalk.yellow('\nProses learn feature dibatalkan.'));
+      return false;
+    }
     spinner.fail(chalk.red(`Gagal mengekstrak aturan dari code: ${error.message}`));
     return false;
+  } finally {
+    clearActiveAbortController();
   }
 }

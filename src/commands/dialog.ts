@@ -1,6 +1,11 @@
 import chalk from 'chalk';
 import ora from 'ora';
-import { select, input } from '../core/nav.js';
+import {
+  select,
+  input,
+  createProcessAbortController,
+  clearActiveAbortController,
+} from '../core/nav.js';
 import { loadConfig } from '../core/config.js';
 import { callLLM } from '../core/llm-client.js';
 import { searchRelevantGuidelines, listAllIndexedGuidelines, insertChunks } from '../core/db.js';
@@ -22,7 +27,7 @@ export async function runInteractiveKnowledgeDialog(): Promise<void> {
   console.log(chalk.gray('• Tanyakan aturan tim (misal: "Apakah kamu punya aturan tentang type?")'));
   console.log(chalk.gray('• AI HANYA menjawab apa yang ada di database RAG lokal.'));
   console.log(chalk.gray('• Ajarkan aturan baru secara langsung di obrolan ini.'));
-  console.log(chalk.gray('• Ketik "b", "back", atau "exit" untuk kembali ke Menu Utama.'));
+  console.log(chalk.gray('• Tekan Esc kapan saja untuk kembali ke Menu Utama.'));
   console.log(chalk.bold.cyan('══════════════════════════════════════════════════════════════════════\n'));
 
   // Riwayat obrolan dalam sesi ini
@@ -44,58 +49,25 @@ export async function runInteractiveKnowledgeDialog(): Promise<void> {
       break;
     }
 
-    const spinner = ora(chalk.blue('Mengecek database pengetahuan RAG...')).start();
+    const spinner = ora(chalk.blue('Mengecek database pengetahuan RAG... (Ctrl+C untuk batalkan)')).start();
+    const chatAbortController = createProcessAbortController();
 
     try {
       const relevantChunks = await searchRelevantGuidelines(cleaned, 4);
 
+      if (chatAbortController.signal.aborted) {
+        spinner.info(chalk.yellow('\nProses dibatalkan.'));
+        clearActiveAbortController();
+        continue;
+      }
+
       if (relevantChunks.length === 0) {
         spinner.stop();
+        clearActiveAbortController();
         console.log(`\n${chalk.bold.cyan('RAG  :')} ${chalk.white('Saya belum mempunyai pengetahuan itu.')}\n`);
 
         chatHistory.push({ role: 'user', text: cleaned });
         chatHistory.push({ role: 'assistant', text: 'Saya belum mempunyai pengetahuan itu.' });
-
-        const quickAction = await select({
-          message: 'Langkah selanjutnya:',
-          choices: [
-            { name: '💬 Lanjut mengobrol / bertanya', value: 'continue' },
-            { name: '💾 Ajarkan & Simpan pernyataan ini sebagai Aturan Baru ke RAG', value: 'save' },
-            { name: '🔙 Selesai & Kembali ke Menu Utama', value: 'back' },
-          ],
-        });
-
-        if (quickAction === 'back') {
-          break;
-        } else if (quickAction === 'save') {
-          const ruleTitle = await input({
-            message: 'Beri judul aturan baru ini:',
-            default: cleaned.slice(0, 50),
-            validate: (v) => (v.trim().length > 0 ? true : 'Judul tidak boleh kosong'),
-          });
-
-          const ruleContent = await input({
-            message: 'Isi spesifikasi aturan:',
-            default: cleaned,
-            validate: (v) => (v.trim().length > 0 ? true : 'Isi aturan tidak boleh kosong'),
-          });
-
-          const saveSpinner = ora(chalk.blue('Menyimpan aturan baru ke RAG...')).start();
-          const chunk: DocChunk = {
-            id: `conv_${Date.now()}`,
-            source: 'interactive_dialog',
-            title: ruleTitle.trim(),
-            content: ruleContent.trim(),
-          };
-
-          const result = await insertChunks([chunk]);
-          if (result.insertedCount > 0) {
-            saveSpinner.succeed(chalk.green(`Aturan "${ruleTitle}" berhasil disimpan ke RAG!`));
-          } else {
-            saveSpinner.info(chalk.yellow(`Aturan ini sudah ada sebelumnya (ditolak duplikat).`));
-          }
-          console.log('');
-        }
         continue;
       }
 
@@ -108,7 +80,7 @@ export async function runInteractiveKnowledgeDialog(): Promise<void> {
         .join('\n\n---\n\n');
 
       const systemPrompt = `You are the strict, honest Guardian of Internal Coding Conventions.
-You are in a direct 2-way conversation with a software developer.
+You are in a direct 2-way conversation with a software developer in a terminal TUI chat.
 
 CRITICAL DIRECTIVES:
 1. STRICT ZERO-ASSUMPTION GROUNDING: You ONLY answer based on the STORED CONVENTIONS provided below.
@@ -116,8 +88,12 @@ CRITICAL DIRECTIVES:
    - YOU MUST ANSWER EXACTLY: "Saya belum mempunyai pengetahuan itu."
    - DO NOT make up conventions. DO NOT guess. DO NOT give general internet/community knowledge.
 3. If the user asks whether you have a rule about something (e.g. "Apakah kamu punya aturan tentang type?"):
-   - Answer directly based on the stored conventions, quote or explain the relevant rule, and reference the rule title.
-4. Keep answers concise, natural, direct, and polite in Indonesian.
+   - Answer directly based on the stored conventions, explain the relevant rule, and reference the rule title.
+4. CHAT STYLE & FORMATTING (TERMINAL FRIENDLY):
+   - DO NOT use heavy markdown such as markdown headers (#, ##, ###), bold wrappers everywhere, or markdown tables.
+   - Answer in natural, friendly, direct conversational Indonesian.
+   - Use clean, simple bullet points (•) to summarize the specific points or rules asked.
+   - Keep answers compact, concise, and easy to read in a CLI terminal.
 
 === DAFTAR ATURAN YANG SUDAH TERDAFTAR DI RAG ===
 ${allTitlesSummary || '(Belum ada aturan yang tersimpan)'}
@@ -133,7 +109,18 @@ ${knowledgeContext}
         : cleaned;
 
       const fullPrompt = `${systemPrompt}\n\n${historyPrompt}`;
-      const answer = await callLLM(fullPrompt, modelName);
+      let answer = '';
+      try {
+        answer = await callLLM(fullPrompt, modelName, chatAbortController.signal);
+      } catch (callErr: any) {
+        if (chatAbortController.signal.aborted || callErr.name === 'AbortError') {
+          spinner.info(chalk.yellow('\nPertanyaan dibatalkan oleh pengguna.'));
+          continue;
+        }
+        throw callErr;
+      } finally {
+        clearActiveAbortController();
+      }
 
       spinner.stop();
 
@@ -149,51 +136,15 @@ ${knowledgeContext}
         relevantChunks.forEach((c) => console.log(chalk.gray(`   • ${c.title}`)));
         console.log('');
       }
-
-      // Beri opsi interaktif cepat
-      const quickAction = await select({
-        message: 'Langkah selanjutnya:',
-        choices: [
-          { name: '💬 Lanjut mengobrol / bertanya', value: 'continue' },
-          { name: '💾 Simpan obrolan / pernyataan ini sebagai Aturan Baru ke RAG', value: 'save' },
-          { name: '🔙 Selesai & Kembali ke Menu Utama', value: 'back' },
-        ],
-      });
-
-      if (quickAction === 'back') {
-        break;
-      } else if (quickAction === 'save') {
-        const ruleTitle = await input({
-          message: 'Beri judul aturan baru ini:',
-          default: cleaned.slice(0, 50),
-          validate: (v) => (v.trim().length > 0 ? true : 'Judul tidak boleh kosong'),
-        });
-
-        const ruleContent = await input({
-          message: 'Isi spesifikasi aturan:',
-          default: cleaned,
-          validate: (v) => (v.trim().length > 0 ? true : 'Isi aturan tidak boleh kosong'),
-        });
-
-        const saveSpinner = ora(chalk.blue('Menyimpan aturan baru ke LanceDB...')).start();
-        const chunk: DocChunk = {
-          id: `conv_${Date.now()}`,
-          source: 'interactive_dialog',
-          title: ruleTitle.trim(),
-          content: ruleContent.trim(),
-        };
-
-        const result = await insertChunks([chunk]);
-        if (result.insertedCount > 0) {
-          saveSpinner.succeed(chalk.green(`Aturan "${ruleTitle}" berhasil disimpan ke RAG!`));
-        } else {
-          saveSpinner.info(chalk.yellow(`Aturan ini sudah ada sebelumnya (ditolak duplikat).`));
-        }
-        console.log('');
-      }
     } catch (err: any) {
-      spinner.fail(chalk.red(`Error: ${err.message}`));
+      if (chatAbortController.signal.aborted || err.name === 'AbortError') {
+        spinner.info(chalk.yellow('\nProses dibatalkan oleh pengguna.'));
+      } else {
+        spinner.fail(chalk.red(`Error: ${err.message}`));
+      }
       console.log('');
+    } finally {
+      clearActiveAbortController();
     }
   }
 }

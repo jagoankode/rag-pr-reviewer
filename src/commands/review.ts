@@ -24,7 +24,7 @@ export interface ReviewOptions {
   outputDir?: string;
 }
 
-function extractReviewResult(rawText: string): FileReviewResult {
+export function extractReviewResult(rawText: string): FileReviewResult {
   const text = (rawText || '').trim();
 
   // 1. Coba parse langsung
@@ -337,9 +337,15 @@ Return strictly a JSON object with this shape:
 
     return reviewResult;
   } catch (error: any) {
+    if (abortController.signal.aborted || error.name === 'AbortError') {
+      spinner.info(chalk.yellow('\nReview dibatalkan oleh pengguna.'));
+      return;
+    }
     spinner.fail(chalk.red(`Review gagal: ${error.message}`));
     console.log(chalk.yellow('\n💡 Tips: Pastikan konfigurasi AI Provider, API key, atau nama branch sudah benar di menu TUI.\n'));
     return;
+  } finally {
+    clearActiveAbortController();
   }
 }
 
