@@ -107,17 +107,8 @@ export async function checkAndUpgradeApp(silent: boolean = false): Promise<boole
           timeout: 45000,
         });
         spinner.succeed(chalk.green(`Lumio berhasil di-upgrade ke v${remoteVersion}! ✨`));
-        console.log(chalk.yellow(`\nMenjalankan ulang perintah dengan versi terbaru...\n`));
-
-        // Re-exec proses dengan binary terbaru secara bersih via spawnSync
-        const binTarget = path.join(os.homedir(), '.local', 'bin', 'lumio');
-        if (fs.existsSync(binTarget)) {
-          const args = process.argv.slice(2);
-          const child_process = await import('child_process');
-          child_process.spawnSync(binTarget, args, { stdio: 'inherit' });
-          process.exit(0);
-        }
-        return true;
+        console.log(chalk.cyan(`\n💡 Silakan ketik ${chalk.bold.green('lumio')} kembali untuk mulai menggunakan versi terbaru.\n`));
+        process.exit(0);
       } catch (err: any) {
         spinner.fail(chalk.yellow(`Gagal auto-upgrade: ${err.message}. Tetap melanjutkan dengan versi saat ini.`));
         return false;
