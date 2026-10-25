@@ -405,7 +405,7 @@ async function reviewWorkflowUI(config: AppConfig) {
     message: 'Pilih mode review git yang diinginkan:',
     choices: [
       {
-        name: `🔀 PR Branch Review (Source Branch ⟵ Target / Origin)`,
+        name: `🔀 PR Branch Review (Bandingkan 2 Branch: Source ⟵ Target)`,
         value: 'pr_branches',
       },
       {
@@ -440,19 +440,7 @@ async function reviewWorkflowUI(config: AppConfig) {
     const { local, remote } = await getAvailableBranches();
     const allBranches = Array.from(new Set([...local, ...remote]));
 
-    const defaultTarget = allBranches.includes('origin/main')
-      ? 'origin/main'
-      : allBranches.includes('main')
-      ? 'main'
-      : 'origin/master';
-
-    const rawTarget = await input({
-      message: 'Target/Base Branch (tujuan PR):',
-      default: defaultTarget,
-    });
-    if (rawTarget.trim().toLowerCase() === 'b' || rawTarget.trim().toLowerCase() === 'back') return;
-    targetBranch = rawTarget.trim();
-
+    // 1. Tanyakan Source/Feature Branch terlebih dahulu
     const defaultSource = currentBranch !== 'HEAD' ? currentBranch : allBranches[0] || 'HEAD';
     const rawSource = await input({
       message: 'Source/Feature Branch (cabang yang mau direview):',
@@ -460,6 +448,20 @@ async function reviewWorkflowUI(config: AppConfig) {
     });
     if (rawSource.trim().toLowerCase() === 'b' || rawSource.trim().toLowerCase() === 'back') return;
     sourceBranch = rawSource.trim();
+
+    // 2. Kemudian tanyakan Target/Base Branch pembanding
+    const defaultTarget = allBranches.includes('origin/main')
+      ? 'origin/main'
+      : allBranches.includes('main')
+      ? 'main'
+      : 'origin/master';
+
+    const rawTarget = await input({
+      message: 'Target/Base Branch (cabang pembanding / tujuan PR):',
+      default: defaultTarget,
+    });
+    if (rawTarget.trim().toLowerCase() === 'b' || rawTarget.trim().toLowerCase() === 'back') return;
+    targetBranch = rawTarget.trim();
   }
 
   const outputDir = config.defaultReportDir || '.lumio-reviews';
