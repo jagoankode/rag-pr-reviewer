@@ -52,23 +52,30 @@ mkdir -p "$BIN_DIR"
 
 # Download langsung via tarball (100% TANPA butuh git di laptop user)
 TMP_DOWNLOAD=$(mktemp -d)
+TMP_STAGING=$(mktemp -d)
+trap 'rm -rf "$TMP_DOWNLOAD" "$TMP_STAGING"' EXIT INT TERM
+
 curl -fsSL https://github.com/jagoankode/rag-pr-reviewer/archive/refs/heads/main.tar.gz | tar -xz -C "$TMP_DOWNLOAD" --strip-components=1
 
-# Pindahkan hanya dist dan package metadata (source code dan git history tidak diikutsertakan)
-rm -rf "$INSTALL_DIR"
-mkdir -p "$INSTALL_DIR"
-cp -r "$TMP_DOWNLOAD/dist" "$INSTALL_DIR/"
-cp "$TMP_DOWNLOAD/package.json" "$INSTALL_DIR/"
-if [ -f "$TMP_DOWNLOAD/package-lock.json" ]; then
-    cp "$TMP_DOWNLOAD/package-lock.json" "$INSTALL_DIR/"
-fi
+# Siapkan di direktori staging dulu agar instalasi bersifat ATOMIC (tidak korup jika di-abort/Ctrl+C)
+mkdir -p "$TMP_STAGING/dist"
+cp -r "$TMP_DOWNLOAD/dist/"* "$TMP_STAGING/dist/"
+cp "$TMP_DOWNLOAD/package.json" "$TMP_STAGING/"
+# Tidak menyertakan package-lock internal cloud provider yang berisi internal mirror domain
 rm -rf "$TMP_DOWNLOAD"
 
 echo -e "${YELLOW}2. Menginstall runtime dependencies lokal...${NC}"
 (
-    cd "$INSTALL_DIR"
+    cd "$TMP_STAGING"
     npm install --omit=dev --loglevel=error --no-audit --no-fund --registry=https://registry.npmjs.org
 )
+
+# Atomic swap: Ganti instalasi lama hanya ketika dependencies sudah 100% terinstall sukses
+rm -rf "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR"
+cp -r "$TMP_STAGING/"* "$INSTALL_DIR/"
+rm -rf "$TMP_STAGING"
+trap - EXIT INT TERM
 
 echo -e "${YELLOW}3. Menyiapkan executable binary 'lumio' di ${BIN_TARGET}...${NC}"
 rm -f "$BIN_TARGET"
@@ -81,7 +88,16 @@ if [ -z "$NODE_EXEC" ]; then
     echo "Error: Node.js runtime not found." >&2
     exit 1
 fi
-exec "$NODE_EXEC" "$HOME/.lumio/app/dist/index.js" "$@"
+
+APP_DIR="$HOME/.lumio/app"
+
+# Self-healing: jika node_modules hilang atau tidak lengkap akibat abort/Ctrl+C
+if [ ! -d "$APP_DIR/node_modules/commander" ]; then
+    echo -e "\033[1;33m[Lumio] Memulihkan dependencies yang terputus...\033[0m" >&2
+    (cd "$APP_DIR" && npm install --omit=dev --loglevel=error --no-audit --no-fund --registry=https://registry.npmjs.org)
+fi
+
+exec "$NODE_EXEC" "$APP_DIR/dist/index.js" "$@"
 EOF
 
 chmod +x "$BIN_TARGET"

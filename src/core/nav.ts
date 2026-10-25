@@ -23,8 +23,11 @@ export function initNavigationGuard() {
 
   process.on('SIGINT', () => {
     if (activeAbortController && !activeAbortController.signal.aborted) {
-      console.log(chalk.yellow('\n\n⚠️  [Membatalkan proses yang sedang berjalan... Kembali ke menu]'));
+      console.log(chalk.yellow('\n\n⚠️  [Membatalkan proses yang sedang berjalan... Menutup dengan aman]'));
       activeAbortController.abort();
+    } else {
+      console.log(chalk.gray('\n\nSampai jumpa! 👋\n'));
+      process.exit(0);
     }
   });
 }
