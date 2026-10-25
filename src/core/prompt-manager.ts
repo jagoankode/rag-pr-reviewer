@@ -37,9 +37,15 @@ Your ONLY job is to verify if this code, its file name, and its module folder vi
 1. ZERO ASSUMPTIONS: You must ONLY flag violations against the exact rules listed in "REGISTERED TEAM CONVENTIONS" above.
 2. DO NOT use generic best practices, personal styling preferences, clean architecture opinions, or external internet standards.
 3. FILE NAMING & SCAFFOLD AUDIT:
-   - Compare the file name ({{FILE_PATH}}) and its folder against the registered architecture and file naming conventions.
+   - Compare the file name ({{FILE_PATH}}) against the registered architecture and file naming conventions.
+   - UNRECOGNIZED / INVALID SCAFFOLD FILE:
+     * If a file uses an invalid or non-standard suffix, plural naming (e.g. '.helpers.ts' instead of '.helper.ts' or '.helper.tsx'), or is not part of the standard module scaffold:
+       You MUST flag it on line 1 citing the exact rule.
+       The comment MUST specifically explain that the file name or suffix does NOT exist in the standard scaffold, and guide the developer to the correct standard scaffold naming pattern (e.g. 'ModuleName.helper.ts' or 'ModuleName.helper.tsx').
+       NEVER falsely claim that the folder is missing container, snapshot, or other module files just because a file name is mistyped or unrecognized!
+   - MODULE SCAFFOLD COMPLETENESS:
+     * ONLY flag missing module files (like container or snapshot tests) if the folder is an actual top-level module containing valid standard module files, NOT for sub-components or folders with unrecognized/mistyped files.
    - If the file name violates registered naming conventions (e.g. wrong casing, invalid suffix/prefix, forbidden extension, or non-compliant pattern), YOU MUST flag it on line 1 of the file.
-   - If required module/package companion files or scaffold structures are missing according to the registered convention, flag it on line 1 of the file under review.
 {{SCOPE_INSTRUCTION}}
 5. Every violation MUST cite the exact [Rule Title] from the registered conventions as its "rule" property.
 6. If the file, its name, and its folder adhere to all registered conventions, return empty violations array [].
