@@ -461,6 +461,24 @@ async function reviewWorkflowUI(config: AppConfig) {
   const outputDir = config.defaultReportDir || '.lumio-reviews';
   let selectedModel = config.defaultModel;
 
+  // Opsi Scope Review: Full file vs Diff changes only (Default: Full file)
+  const scopeChoice = await select<'full' | 'diff' | 'back'>({
+    message: 'Pilih cakupan analisis review (Review Scope):',
+    choices: [
+      {
+        name: '📄 Full File (Default: Audit 1 file utuh yang terdampak perubahan)',
+        value: 'full',
+      },
+      {
+        name: '✂️  Diff Only (Hanya audit baris kode baru yang diubah/ditambah)',
+        value: 'diff',
+      },
+    ],
+  });
+
+  if (scopeChoice === 'back') return;
+  const reviewScope = scopeChoice === 'diff' ? 'diff' : 'full';
+
   if (!selectedModel) {
     console.log(chalk.yellow('\n⚠️  Belum ada model AI yang dipilih/aktif!'));
     selectedModel = await input({
@@ -470,11 +488,12 @@ async function reviewWorkflowUI(config: AppConfig) {
     selectedModel = selectedModel.trim();
   }
 
-  console.log(chalk.gray(`\nℹ️  Menggunakan Model: ${chalk.cyan(selectedModel)} | Output: ${chalk.cyan(outputDir)}\n`));
+  console.log(chalk.gray(`\nℹ️  Model: ${chalk.cyan(selectedModel)} | Scope: ${chalk.cyan(reviewScope.toUpperCase())} | Output: ${chalk.cyan(outputDir)}\n`));
   await reviewCommand({
     staged: diffType === 'staged',
     target: targetBranch,
     source: sourceBranch,
+    scope: reviewScope,
     fetchRemote: doFetch,
     model: selectedModel,
     outputDir: outputDir,

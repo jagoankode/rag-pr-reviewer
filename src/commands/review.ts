@@ -16,6 +16,7 @@ export interface ReviewOptions {
   branch?: string;        // target/base branch
   source?: string;        // source/feature branch
   target?: string;        // target/base branch
+  scope?: 'full' | 'diff'; // 'full' = review 1 file utuh terdampak | 'diff' = review baris diff saja (default: 'full')
   fetchRemote?: boolean;
   model?: string;
   limit?: number;
@@ -211,6 +212,9 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
           continue;
         }
 
+        const reviewScope = options.scope || 'full';
+        const isDiffOnly = reviewScope === 'diff';
+
         const prompt = `You are a strict Code Convention Auditor.
 Your ONLY job is to verify if this code and its module folder violate the EXPLICIT registered conventions provided below.
 
@@ -232,7 +236,9 @@ ${fileDiff.annotatedText}
 1. ZERO ASSUMPTIONS: You must ONLY flag violations against the exact rules listed in "REGISTERED TEAM CONVENTIONS" above.
 2. DO NOT use generic best practices, personal styling preferences, clean architecture opinions, or external internet standards.
 3. SCAFFOLD & MODULE AUDIT: Use the "MODULE CONTEXT & SURROUNDING FOLDER" to verify if required files (e.g., wrapper, container, component, hook, index.ts, test files) are present or missing according to registered conventions. If required files are missing in this folder according to the registered convention, flag it on line 1 of the file under review.
-4. WHOLE FILE AUDIT: Inspect all lines of the file that was modified. If any line violates registered conventions (e.g., styling, forbidden types, misplaced hooks, missing JSDoc, double fallback, naming), report the exact line number \`L<number>\`.
+${isDiffOnly
+  ? '4. DIFF-ONLY AUDIT: Inspect ONLY the newly added or modified lines in the RECENT GIT CHANGES (DIFF) marked with "+ L<number>". Do NOT flag unchanged or pre-existing code outside the diff changes.'
+  : '4. WHOLE FILE AUDIT: Inspect all lines of the file that was modified. If any line violates registered conventions (e.g., styling, forbidden types, misplaced hooks, missing JSDoc, double fallback, naming), report the exact line number `L<number>`.'}
 5. Every violation MUST cite the exact [Rule Title] from the registered conventions as its "rule" property.
 6. If the file and its folder adhere to all registered conventions, return empty violations array [].
 7. SuggestedFix must be an actionable replacement code snippet or null if not applicable.
