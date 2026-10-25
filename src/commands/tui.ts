@@ -449,16 +449,10 @@ async function reviewWorkflowUI(config: AppConfig) {
     if (rawSource.trim().toLowerCase() === 'b' || rawSource.trim().toLowerCase() === 'back') return;
     sourceBranch = rawSource.trim();
 
-    // 2. Kemudian tanyakan Target/Base Branch pembanding
-    const defaultTarget = allBranches.includes('origin/main')
-      ? 'origin/main'
-      : allBranches.includes('main')
-      ? 'main'
-      : 'origin/master';
-
+    // 2. Kemudian tanyakan Target/Base Branch pembanding (tanpa default)
     const rawTarget = await input({
       message: 'Target/Base Branch (cabang pembanding / tujuan PR):',
-      default: defaultTarget,
+      validate: (val) => (val.trim().length > 0 ? true : 'Target branch tidak boleh kosong'),
     });
     if (rawTarget.trim().toLowerCase() === 'b' || rawTarget.trim().toLowerCase() === 'back') return;
     targetBranch = rawTarget.trim();
