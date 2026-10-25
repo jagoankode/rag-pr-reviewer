@@ -109,11 +109,12 @@ export async function checkAndUpgradeApp(silent: boolean = false): Promise<boole
         spinner.succeed(chalk.green(`Lumio berhasil di-upgrade ke v${remoteVersion}! ✨`));
         console.log(chalk.yellow(`\nMenjalankan ulang perintah dengan versi terbaru...\n`));
 
-        // Re-exec proses dengan argv yang sama
-        const nodeExec = process.execPath;
+        // Re-exec proses dengan binary terbaru secara bersih via spawnSync
         const binTarget = path.join(os.homedir(), '.local', 'bin', 'lumio');
         if (fs.existsSync(binTarget)) {
-          execSync(`"${binTarget}" ${process.argv.slice(2).join(' ')}`, { stdio: 'inherit' });
+          const args = process.argv.slice(2);
+          const child_process = await import('child_process');
+          child_process.spawnSync(binTarget, args, { stdio: 'inherit' });
           process.exit(0);
         }
         return true;
