@@ -8,6 +8,7 @@ import { searchRelevantGuidelines } from '../core/db.js';
 import { saveReviewReport } from '../core/history.js';
 import { loadConfig } from '../core/config.js';
 import { callLLM } from '../core/llm-client.js';
+import { getDynamicAuditPromptTemplate } from '../core/prompt-manager.js';
 import { setActiveAbortController, createProcessAbortController, clearActiveAbortController } from '../core/nav.js';
 import { FileReviewResult, PRReviewResult, LineViolation } from '../core/schema.js';
 
@@ -214,50 +215,21 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
 
         const reviewScope = options.scope || 'full';
         const isDiffOnly = reviewScope === 'diff';
+        const scopeInstruction = isDiffOnly
+          ? '4. DIFF-ONLY AUDIT: Inspect ONLY the newly added or modified lines in the RECENT GIT CHANGES (DIFF) marked with "+ L<number>". Do NOT flag unchanged or pre-existing code outside the diff changes.'
+          : '4. WHOLE FILE AUDIT: Inspect all lines of the file that was modified. If any line violates registered conventions (e.g., styling, forbidden types, misplaced hooks, missing JSDoc, double fallback, naming), report the exact line number `L<number>`.';
 
-        const prompt = `You are a strict Code Convention Auditor.
-Your ONLY job is to verify if this code and its module folder violate the EXPLICIT registered conventions provided below.
+        // Ambil dynamic audit prompt template dari DB/cache
+        const promptTemplate = await getDynamicAuditPromptTemplate();
 
-### REGISTERED TEAM CONVENTIONS (EXACT TRUTH FROM VECTOR DB):
-${relevantRules.join('\n\n---\n\n')}
-
-### MODULE CONTEXT & SURROUNDING FOLDER:
-- File Under Review: ${fileDiff.file}
-- Containing Folder: ${folderRelative}
-- Files Present in this Folder: [${folderFilesList.join(', ')}]
-
-### COMPLETE FILE CONTENT WITH PHYSICAL LINE NUMBERS:
-${allFileLinesText || fileDiff.annotatedText}
-
-### RECENT GIT CHANGES (DIFF):
-${fileDiff.annotatedText}
-
-### STRICT AUDIT RULES:
-1. ZERO ASSUMPTIONS: You must ONLY flag violations against the exact rules listed in "REGISTERED TEAM CONVENTIONS" above.
-2. DO NOT use generic best practices, personal styling preferences, clean architecture opinions, or external internet standards.
-3. SCAFFOLD & MODULE AUDIT: Use the "MODULE CONTEXT & SURROUNDING FOLDER" to verify if required files (e.g., wrapper, container, component, hook, index.ts, test files) are present or missing according to registered conventions. If required files are missing in this folder according to the registered convention, flag it on line 1 of the file under review.
-${isDiffOnly
-  ? '4. DIFF-ONLY AUDIT: Inspect ONLY the newly added or modified lines in the RECENT GIT CHANGES (DIFF) marked with "+ L<number>". Do NOT flag unchanged or pre-existing code outside the diff changes.'
-  : '4. WHOLE FILE AUDIT: Inspect all lines of the file that was modified. If any line violates registered conventions (e.g., styling, forbidden types, misplaced hooks, missing JSDoc, double fallback, naming), report the exact line number `L<number>`.'}
-5. Every violation MUST cite the exact [Rule Title] from the registered conventions as its "rule" property.
-6. If the file and its folder adhere to all registered conventions, return empty violations array [].
-7. SuggestedFix must be an actionable replacement code snippet or null if not applicable.
-
-Return strictly a JSON object with this shape:
-{
-  "violations": [
-    {
-      "file": "${fileDiff.file}",
-      "line": 1,
-      "rule": "[Exact Rule Title from Registered Conventions]",
-      "severity": "error",
-      "comment": "Clear explanation referencing the rule",
-      "suggestedFix": null
-    }
-  ],
-  "notes": []
-}
-`;
+        const prompt = promptTemplate
+          .replace(/\{\{REGISTERED_CONVENTIONS\}\}/g, relevantRules.join('\n\n---\n\n'))
+          .replace(/\{\{FILE_PATH\}\}/g, fileDiff.file)
+          .replace(/\{\{CONTAINING_FOLDER\}\}/g, folderRelative)
+          .replace(/\{\{FOLDER_FILES\}\}/g, folderFilesList.join(', '))
+          .replace(/\{\{FILE_CONTENT\}\}/g, allFileLinesText || fileDiff.annotatedText)
+          .replace(/\{\{FILE_DIFF\}\}/g, fileDiff.annotatedText)
+          .replace(/\{\{SCOPE_INSTRUCTION\}\}/g, scopeInstruction);
 
         let object: FileReviewResult | null = null;
 

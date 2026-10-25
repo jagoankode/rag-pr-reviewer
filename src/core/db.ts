@@ -4,6 +4,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { embed, embedMany } from 'ai';
 import path from 'path';
 import os from 'os';
+import crypto from 'crypto';
 import chalk from 'chalk';
 import { DocChunk } from './chunker.js';
 import { getActiveAIProvider, loadConfig, getConfigDir } from './config.js';
@@ -178,15 +179,17 @@ export async function listAllIndexedGuidelines(): Promise<{ id: string; source: 
     try {
       const { client, collection } = await getQdrantClient();
       const points = await client.scroll(collection, { limit: 500, with_payload: true });
-      return points.points.map((p) => {
-        const payload = p.payload as any;
-        return {
-          id: String(p.id),
-          source: payload?.source || 'remote_vps',
-          title: payload?.title || 'Untitled',
-          content: payload?.content || '',
-        };
-      });
+      return points.points
+        .filter((p: any) => p.payload?.source !== 'system-prompt')
+        .map((p) => {
+          const payload = p.payload as any;
+          return {
+            id: String(p.id),
+            source: payload?.source || 'remote_vps',
+            title: payload?.title || 'Untitled',
+            content: payload?.content || '',
+          };
+        });
     } catch (err: any) {
       throw new Error(`Gagal membaca data dari Qdrant VPS: ${err.message}`);
     }
@@ -251,11 +254,15 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
 
     const points = uniqueChunks.map((chunk, i) => {
       const nowIso = new Date().toISOString();
+      const pointId = typeof chunk.id === 'string' && /^[0-9a-fA-F-]+$/.test(chunk.id)
+        ? chunk.id
+        : crypto.randomUUID();
+
       return {
-        id: typeof chunk.id === 'string' && /^[0-9a-fA-F-]+$/.test(chunk.id) ? chunk.id : Math.floor(Math.random() * 1000000000),
+        id: pointId,
         vector: vectors[i],
         payload: {
-          originalId: chunk.id,
+          originalId: chunk.id || pointId,
           source: chunk.source,
           title: chunk.title,
           content: chunk.content,
@@ -354,7 +361,7 @@ export async function insertGuideline(
   source: string = 'manual'
 ): Promise<InsertResult> {
   const chunk: DocChunk = {
-    id: String(Math.floor(Math.random() * 1000000000)),
+    id: crypto.randomUUID(),
     source,
     title,
     content,

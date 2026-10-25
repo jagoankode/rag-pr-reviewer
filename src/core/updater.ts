@@ -179,14 +179,17 @@ export async function syncGuidelinesRules(options: { force?: boolean; quiet?: bo
   try {
     const { client } = await getQdrantClient();
 
-    // 1. Ambil scroll ringan untuk mendapatkan seluruh rules dari Qdrant
+    // 1. Ambil scroll ringan untuk mendapatkan seluruh rules dari Qdrant (KECUALI system-prompt)
     const response = await client.scroll(collection, {
       limit: 500,
       with_payload: true,
       with_vector: false, // TIDAK PERLU VECTOR -> Super cepat & hemat bandwidth!
     });
 
-    const points = response.points || [];
+    // Filter ketat: kecualikan system-prompt agar tidak tercampur sebagai aturan coding!
+    const points = (response.points || []).filter(
+      (p: any) => p.payload?.source !== 'system-prompt'
+    );
 
     // 2. Hitung revision hash dari kumpulan contentHash
     const hashes = points
