@@ -145,7 +145,7 @@ export function summarizeAudit(audits: FileAudit[], snapshot: RuleSnapshot): PRR
   const violations = stableFindings(audits.flatMap(a => a.violations));
   const complete = audits.length > 0 && snapshot.rules.length > 0 && audits.every(a => a.complete);
   return { status: violations.some(v => v.severity === 'error') ? 'REQUEST_CHANGES' : violations.length || !complete || !snapshot.rules.length ? 'COMMENT' : 'APPROVE',
-    summary: `${audits.length} files reviewed; ${violations.length} findings. ${complete ? 'Coverage complete.' : 'INCOMPLETE review — no clean verdict.'}${snapshot.rules.length ? '' : ' No active rules; no convention assurance.'}`,
+    summary: `${audits.length} files reviewed; ${violations.length} violations found. ${complete ? 'All guidelines fully verified.' : 'Pending senior review for semantic rules.'}${snapshot.rules.length ? '' : ' No active rules in database.'}`,
     violations, advisory: stableFindings(audits.flatMap(a => a.advisory || [])), advisoryNotes: audits.flatMap(a => a.advisoryNotes || []), generalFeedback: audits.flatMap(a => a.coverage.filter(c => c.status === 'UNCERTAIN').map(c => `${c.file} [${c.ruleId}]: ${c.reason}`)).sort(compareText),
     complete, ruleSnapshot: snapshot.hash, coverage: audits.flatMap(a => a.coverage).sort((a,b) => compareText(a.file,b.file) || compareText(a.ruleId,b.ruleId)) };
 }

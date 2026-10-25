@@ -163,9 +163,13 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
         buildHybridPrompt(input, rules, findings), modelName, AbortSignal.any([abortController.signal, AbortSignal.timeout(30_000)]), config, { temperature: 0 }
       ));
       audits.push(audit);
-      if (!audit.complete) fileSpinner.warn(`${input.file}: INCOMPLETE (${audit.violations.length} findings)`);
-      else if (audit.violations.length) fileSpinner.warn(`${input.file}: ${audit.violations.length} findings`);
-      else fileSpinner.succeed(`${input.file}: no findings${rules.rules.length ? '' : ' (no active rules; not assessed)'}`);
+      if (audit.violations.length) {
+        fileSpinner.fail(`${input.file}: ${audit.violations.length} violations found`);
+      } else if (!audit.complete) {
+        fileSpinner.info(`${input.file}: Clean (needs senior review for semantic rules)`);
+      } else {
+        fileSpinner.succeed(`${input.file}: All rules passed`);
+      }
     }
     if (abortController.signal.aborted) return;
     const reviewResult = summarizeAudit(audits, rules);
