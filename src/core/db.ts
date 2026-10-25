@@ -12,6 +12,7 @@ import { createTfIdfIndex } from './local-embedder.js';
 import { getNormHash } from './dedup.js';
 import { syncGuidelinesRules, readCachedRules } from './updater.js';
 import { rankGuidelinesByRelevance } from './matcher.js';
+import { logError, logInfo } from './logger.js';
 
 const TABLE_NAME = 'guidelines';
 
@@ -157,8 +158,7 @@ async function generateVectors(texts: string[], targetDimensions?: number): Prom
       return embeddings;
     }
   } catch (err: any) {
-    console.warn(`\n⚠️  Model/Endpoint embedding tidak merespons: ${err.message}.`);
-    console.warn('⚡ Mengalihkan ke local text vectorizer...');
+    logError('Embedding', err, { model, textsCount: texts.length });
   }
 
   // Local TF-IDF Fallback
@@ -520,7 +520,7 @@ export async function searchGuidelinesForDialog(
         }
       }
     } catch (err: any) {
-      // Fallback ke local cache jika koneksi Qdrant gagal
+      logError('QdrantDialogSearch', err, { query, limit });
     }
   }
 
@@ -556,8 +556,7 @@ export async function searchRelevantGuidelines(
       // Ranking relevansi kode/scaffold terhadap pasal-pasal
       return rankGuidelinesByRelevance(query, allRules, limit);
     } catch (err: any) {
-      const detail = err.data?.status?.error || err.message || String(err);
-      console.error(chalk.red(`\n[Guidelines Rules Error]: ${detail}`));
+      logError('GuidelinesRules', err, { query, limit });
       return [];
     }
   }

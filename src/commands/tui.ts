@@ -11,6 +11,7 @@ import { loadConfig, saveConfig, AppConfig, DatabaseType, ProviderProfile, resol
 import { Language, getTranslation } from '../core/i18n.js';
 import { listSavedReports, resolveReportDir, deleteReportFile, clearAllReports } from '../core/history.js';
 import { getAppVersion } from '../core/version.js';
+import { readRecentLogs, clearAllLogs, getLogFilePath, logError } from '../core/logger.js';
 import { promises as fs } from 'fs';
 
 function stripAnsi(str: string): string {
@@ -168,6 +169,10 @@ async function settingsMenuUI(config: AppConfig, inRepo: boolean) {
           name: `${chalk.bold.cyan(padAnsiEnd(t.settingDbTitle, 32))} ${chalk.gray(t.settingDbDesc)}`,
           value: 'database',
         },
+        {
+          name: `${chalk.bold.cyan(padAnsiEnd(t.settingLogTitle, 32))} ${chalk.gray(t.settingLogDesc)}`,
+          value: 'logs',
+        },
       ],
     });
 
@@ -181,6 +186,8 @@ async function settingsMenuUI(config: AppConfig, inRepo: boolean) {
       await switchLanguageUI(freshConfig);
     } else if (settingChoice === 'database') {
       await configureDatabaseUI(freshConfig);
+    } else if (settingChoice === 'logs') {
+      await viewLogsUI();
     }
   }
 }
@@ -1210,6 +1217,64 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
           });
           if (val && val !== 'back') defaultReportDir = val.trim();
         }
+      }
+    }
+  }
+}
+
+async function viewLogsUI() {
+  while (true) {
+    printHeader('Menu Utama > ⚙️ Pengaturan > 📜 System Logs & Tracing');
+    const logPath = getLogFilePath();
+    const lines = await readRecentLogs(30);
+
+    console.log(chalk.gray(`Path Log: ${chalk.cyan(logPath)}\n`));
+    console.log(chalk.cyan('─── Catatan Log Error & Tracing Terakhir (Max 30 Baris) ───'));
+
+    if (lines.length === 0) {
+      console.log(chalk.gray('\n(Belum ada catatan log error/tracing. File log masih bersih)\n'));
+    } else {
+      console.log('');
+      for (const line of lines) {
+        try {
+          const parsed = JSON.parse(line);
+          const time = parsed.time || '';
+          const level = parsed.level === 50 ? chalk.red('[ERROR]') : parsed.level === 40 ? chalk.yellow('[WARN]') : chalk.blue('[INFO]');
+          const ctx = parsed.context ? chalk.magenta(`[${parsed.context}]`) : '';
+          const msg = parsed.err?.message || parsed.message || line;
+          console.log(`${chalk.gray(time)} ${level} ${ctx} ${msg}`);
+          if (parsed.err?.stack) {
+            const stackFirstLine = parsed.err.stack.split('\n')[1];
+            if (stackFirstLine) console.log(chalk.gray(`    ${stackFirstLine.trim()}`));
+          }
+        } catch {
+          console.log(chalk.gray(line));
+        }
+      }
+      console.log('');
+    }
+    console.log(chalk.cyan('───────────────────────────────────────────────────────────\n'));
+
+    const logAction = await select({
+      message: 'Pilih aksi log:',
+      choices: [
+        { name: '🔄 Refresh Log Terbaru', value: 'refresh' },
+        { name: '🧹 Bersihkan Semua Log (Clear Log)', value: 'clear' },
+        { name: '🔙 Kembali ke Menu Pengaturan', value: 'back' },
+      ],
+    });
+
+    if (logAction === 'back') return;
+
+    if (logAction === 'clear') {
+      const ok = await confirm({
+        message: 'Apakah Anda yakin ingin MENGHAPUS / mengosongkan seluruh file log?',
+        default: false,
+      });
+
+      if (ok) {
+        await clearAllLogs();
+        console.log(chalk.green('\n✔ File log berhasil dikosongkan!\n'));
       }
     }
   }

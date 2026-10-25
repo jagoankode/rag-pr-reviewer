@@ -1,10 +1,22 @@
 import { getQdrantClient } from './db.js';
 import { loadConfig } from './config.js';
+import { logError } from './logger.js';
 
-// ID khusus system-prompt dalam format UUID v4
-export const SYSTEM_PROMPT_POINT_ID = '6642a3e4-6954-48e8-a5eb-c1723960aa78';
+export type PromptKey = 'audit-pr' | 'dialog-chat' | 'learn-mining';
 
-export const DEFAULT_AUDIT_PROMPT_TEMPLATE = `You are a strict Code Convention Auditor.
+export interface PromptDefinition {
+  id: string;
+  promptKey: PromptKey;
+  title: string;
+  defaultTemplate: string;
+}
+
+export const PROMPT_REGISTRY: Record<PromptKey, PromptDefinition> = {
+  'audit-pr': {
+    id: '6642a3e4-6954-48e8-a5eb-c1723960aa78',
+    promptKey: 'audit-pr',
+    title: 'System Review Audit Prompt Template',
+    defaultTemplate: `You are a strict Code Convention Auditor.
 Your ONLY job is to verify if this code, its file name, and its module folder violate the EXPLICIT registered conventions provided below.
 
 ### REGISTERED TEAM CONVENTIONS (EXACT TRUTH FROM VECTOR DB):
@@ -25,9 +37,9 @@ Your ONLY job is to verify if this code, its file name, and its module folder vi
 1. ZERO ASSUMPTIONS: You must ONLY flag violations against the exact rules listed in "REGISTERED TEAM CONVENTIONS" above.
 2. DO NOT use generic best practices, personal styling preferences, clean architecture opinions, or external internet standards.
 3. FILE NAMING & SCAFFOLD AUDIT:
-   - Compare the file name ({{FILE_PATH}}) and its folder against the module structure convention (e.g. Section 2.1).
-   - If the file name itself violates conventions (e.g., using plural suffix like ".helpers.ts" instead of singular ".helper.ts", wrong extension, or invalid naming pattern), YOU MUST flag it on line 1 of the file.
-   - If required module files (e.g., wrapper, container, component, hook, index.ts, test files) are missing according to the registered convention, flag it on line 1 of the file under review.
+   - Compare the file name ({{FILE_PATH}}) and its folder against the registered architecture and file naming conventions.
+   - If the file name violates registered naming conventions (e.g. wrong casing, invalid suffix/prefix, forbidden extension, or non-compliant pattern), YOU MUST flag it on line 1 of the file.
+   - If required module/package companion files or scaffold structures are missing according to the registered convention, flag it on line 1 of the file under review.
 {{SCOPE_INSTRUCTION}}
 5. Every violation MUST cite the exact [Rule Title] from the registered conventions as its "rule" property.
 6. If the file, its name, and its folder adhere to all registered conventions, return empty violations array [].
@@ -47,22 +59,91 @@ Return strictly a JSON object with this shape:
   ],
   "notes": []
 }
-`;
+`,
+  },
+  'dialog-chat': {
+    id: '689baed2-dc0a-4093-a198-393a94a3b802',
+    promptKey: 'dialog-chat',
+    title: 'System Dialog Chat Q&A Prompt Template',
+    defaultTemplate: `You are an AI assistant answering questions about the team's internal coding guidelines.
+You are chatting directly in a CLI terminal interface.
+
+CRITICAL DIRECTIVES:
+1. STRICT ZERO-ASSUMPTION GROUNDING: You ONLY answer based on the STORED CONVENTIONS below.
+2. STRICT RELEVANCE & FOCUS: Answer ONLY what is explicitly asked. Do NOT explain other topics.
+   - For example: if user asks about "variable naming", explain ONLY variable naming. Do NOT include typing policy, function rules, or unrelated topics unless asked.
+3. NO MARKDOWN FORMATTING (CLI TERMINAL):
+   - DO NOT use markdown bold (no ** or __).
+   - DO NOT use markdown code blocks (no \`\`\` or \`).
+   - If providing code examples, write them as plain indented text.
+   - Use simple clean bullets (•) for lists.
+4. If not found in STORED CONVENTIONS, answer exactly: "Saya belum mempunyai informasi mengenai aturan itu."
+5. Respond in clear, polite, natural Indonesian.
+
+=== DAFTAR ATURAN TIM ===
+{{ALL_TITLES_SUMMARY}}
+
+=== ISI DETAIL ATURAN YANG RELEVAN ===
+{{KNOWLEDGE_CONTEXT}}
+=======================================
+`,
+  },
+  'learn-mining': {
+    id: 'ab31817e-b00d-4099-b6ee-0a01b6e3c96d',
+    promptKey: 'learn-mining',
+    title: 'System Codebase Mining Prompt Template',
+    defaultTemplate: `You are a Principal Software Architect.
+Analyze the following source code files from a local feature/module folder ({{FOLDER_NAME}}).
+Trace the flow from entrypoint/route down to business logic and data layer.
+
+Reverse-engineer the implicit and explicit CODING CONVENTIONS, architecture patterns, and rules that this team follows.
+
+Extract rules across these categories:
+- Routing & Controller patterns (input validation, error handling, status codes)
+- Service / Business logic rules (DTO usage, typing, pure logic vs side effects)
+- Model & Database persistence conventions
+- Naming conventions (files, variables, interfaces)
+
+Return ONLY valid JSON matching this schema:
+{
+  "featureName": "string",
+  "architectureSummary": "string",
+  "rules": [
+    {
+      "layer": "routing | service | model | general",
+      "title": "string",
+      "convention": "string",
+      "exampleGood": "string or null"
+    }
+  ]
+}
+
+Source Code from folder:
+{{CODE_CONTEXT}}
+`,
+  },
+};
+
+// Aliases untuk backward compatibility
+export const SYSTEM_PROMPT_POINT_ID = PROMPT_REGISTRY['audit-pr'].id;
+export const DEFAULT_AUDIT_PROMPT_TEMPLATE = PROMPT_REGISTRY['audit-pr'].defaultTemplate;
 
 /**
- * Mengambil template prompt audit dari DB (Qdrant) jika tersedia,
- * dengan fallback ke DEFAULT_AUDIT_PROMPT_TEMPLATE jika offline/belum diset.
+ * Mengambil prompt template dari DB (Qdrant) berdasarkan key,
+ * dengan fallback ke default template jika offline atau belum diisi di DB.
  */
-export async function getDynamicAuditPromptTemplate(): Promise<string> {
-  const config = await loadConfig();
+export async function getDynamicPrompt(key: PromptKey): Promise<string> {
+  const def = PROMPT_REGISTRY[key];
+  if (!def) return '';
 
+  const config = await loadConfig();
   if (config.dbType === 'qdrant') {
     try {
       const { client, collection } = await getQdrantClient();
-      
-      // 1. Coba retrieve via UUID tetap
+
+      // 1. Coba retrieve via UUID point
       const points = await client.retrieve(collection, {
-        ids: [SYSTEM_PROMPT_POINT_ID],
+        ids: [def.id],
         with_payload: true,
       });
 
@@ -70,11 +151,12 @@ export async function getDynamicAuditPromptTemplate(): Promise<string> {
         return String(points[0].payload.content);
       }
 
-      // 2. Fallback query: cari point dengan source: 'system-prompt'
+      // 2. Fallback query: cari point dengan promptKey sama
       const scrollRes = await client.scroll(collection, {
         filter: {
           must: [
             { key: 'source', match: { value: 'system-prompt' } },
+            { key: 'promptKey', match: { value: key } },
           ],
         },
         limit: 1,
@@ -84,34 +166,48 @@ export async function getDynamicAuditPromptTemplate(): Promise<string> {
       if (scrollRes.points && scrollRes.points.length > 0 && scrollRes.points[0].payload?.content) {
         return String(scrollRes.points[0].payload.content);
       }
-    } catch {
-      // Fallback ke default template jika offline
+    } catch (err: any) {
+      logError('prompt-manager', `Failed retrieving dynamic prompt for [${key}], using fallback: ${err?.message}`);
     }
   }
 
-  return DEFAULT_AUDIT_PROMPT_TEMPLATE;
+  return def.defaultTemplate;
+}
+
+export async function getDynamicAuditPromptTemplate(): Promise<string> {
+  return await getDynamicPrompt('audit-pr');
+}
+
+export async function getDynamicDialogPromptTemplate(): Promise<string> {
+  return await getDynamicPrompt('dialog-chat');
+}
+
+export async function getDynamicLearnPromptTemplate(): Promise<string> {
+  return await getDynamicPrompt('learn-mining');
 }
 
 /**
- * Menyimpan / memperbarui template prompt audit di Qdrant
+ * Menyimpan / memperbarui prompt template di Qdrant
  */
-export async function saveDynamicAuditPromptTemplate(template: string): Promise<boolean> {
+export async function saveDynamicPrompt(key: PromptKey, template: string): Promise<boolean> {
+  const def = PROMPT_REGISTRY[key];
+  if (!def) return false;
+
   const { client, collection } = await getQdrantClient();
   const now = new Date().toISOString();
-
-  // Simpan dengan vector dummy agar sesuai skema qdrant (3072 dimensi)
   const dummyVector = new Array(3072).fill(0);
 
   await client.upsert(collection, {
     wait: true,
     points: [
       {
-        id: SYSTEM_PROMPT_POINT_ID,
+        id: def.id,
         vector: dummyVector,
         payload: {
-          originalId: String(SYSTEM_PROMPT_POINT_ID),
+          originalId: def.id,
+          promptKey: key,
           source: 'system-prompt',
-          title: 'System Review Audit Prompt Template',
+          title: def.title,
           content: template,
           status: 'ACTIVE',
           created_at: now,
@@ -122,4 +218,8 @@ export async function saveDynamicAuditPromptTemplate(template: string): Promise<
   });
 
   return true;
+}
+
+export async function saveDynamicAuditPromptTemplate(template: string): Promise<boolean> {
+  return await saveDynamicPrompt('audit-pr', template);
 }

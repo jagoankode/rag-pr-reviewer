@@ -95,44 +95,63 @@ export async function loadConfig(): Promise<AppConfig> {
       await fs.access(legacyFile);
       configFile = legacyFile;
     } catch {
-      // Tidak ada file config
+      // Tidak ada file config global
     }
   }
+
+  let merged: AppConfig = { ...DEFAULT_CONFIG };
 
   try {
     const data = await fs.readFile(configFile, 'utf-8');
     const parsed = JSON.parse(data);
-    const merged: AppConfig = { ...DEFAULT_CONFIG, ...parsed };
-
-    // Pastikan providers dan modelProviderMap terinisialisasi
-    if (!merged.providers) {
-      merged.providers = { ...DEFAULT_CONFIG.providers };
-    }
-    if (!merged.modelProviderMap) {
-      merged.modelProviderMap = { ...DEFAULT_CONFIG.modelProviderMap };
-    }
-
-    if (!Array.isArray(merged.savedModels)) {
-      merged.savedModels = merged.defaultModel ? [merged.defaultModel] : [];
-    }
-
-    // Pastikan models di provider profile tersinkron
-    for (const [model, provId] of Object.entries(merged.modelProviderMap)) {
-      if (merged.providers[provId] && !merged.providers[provId].models.includes(model)) {
-        merged.providers[provId].models.push(model);
-      }
-    }
-
-    return merged;
+    merged = { ...DEFAULT_CONFIG, ...parsed };
   } catch {
     const envApiKey = process.env.OPENAI_API_KEY || '';
     const envBaseUrl = process.env.OPENAI_BASE_URL || '';
-    return {
+    merged = {
       ...DEFAULT_CONFIG,
       apiKey: envApiKey,
       baseUrl: envBaseUrl,
     };
   }
+
+  // Support local project config (.lumiorc.json atau .lumio.json di root repo)
+  // Memungkinkan tim lain (e.g. BE Java, Mobile) meng-override qdrantCollection/model per-repo
+  const localRcCandidates = [
+    path.join(process.cwd(), '.lumiorc.json'),
+    path.join(process.cwd(), '.lumio.json'),
+  ];
+  for (const rcPath of localRcCandidates) {
+    try {
+      const rcData = await fs.readFile(rcPath, 'utf-8');
+      const localOverrides = JSON.parse(rcData);
+      merged = { ...merged, ...localOverrides };
+      break;
+    } catch {
+      // Abaikan jika tidak ada file lokal
+    }
+  }
+
+  // Pastikan providers dan modelProviderMap terinisialisasi
+  if (!merged.providers) {
+    merged.providers = { ...DEFAULT_CONFIG.providers };
+  }
+  if (!merged.modelProviderMap) {
+    merged.modelProviderMap = { ...DEFAULT_CONFIG.modelProviderMap };
+  }
+
+  if (!Array.isArray(merged.savedModels)) {
+    merged.savedModels = merged.defaultModel ? [merged.defaultModel] : [];
+  }
+
+  // Pastikan models di provider profile tersinkron
+  for (const [model, provId] of Object.entries(merged.modelProviderMap)) {
+    if (merged.providers[provId] && !merged.providers[provId].models.includes(model)) {
+      merged.providers[provId].models.push(model);
+    }
+  }
+
+  return merged;
 }
 
 /**

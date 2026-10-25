@@ -6,6 +6,7 @@ import { MinedConventionsSchema, MinedConventions } from '../core/learn-schema.j
 import { loadConfig } from '../core/config.js';
 import { setActiveAbortController, createProcessAbortController, clearActiveAbortController } from '../core/nav.js';
 import { callLLM } from '../core/llm-client.js';
+import { getDynamicLearnPromptTemplate } from '../core/prompt-manager.js';
 import { insertChunks, InsertResult } from '../core/db.js';
 import { DocChunk } from '../core/chunker.js';
 import { resolveUserPath } from './ingest.js';
@@ -78,35 +79,10 @@ export async function learnFeatureCommand(targetPath: string, modelOverride?: st
 
     spinner.text = chalk.magenta(`Menganalisis pola arsitektur & aturan coding via AI (${modelName})... (Ctrl+C: Batal)`);
 
-    const prompt = `You are a Principal Software Architect.
-Analyze the following source code files from a local feature/module folder (${path.basename(resolved)}).
-Trace the flow from entrypoint/route down to business logic and data layer.
-
-Reverse-engineer the implicit and explicit CODING CONVENTIONS, architecture patterns, and rules that this team follows.
-
-Extract rules across these categories:
-- Routing & Controller patterns (input validation, error handling, status codes)
-- Service / Business logic rules (DTO usage, typing, pure logic vs side effects)
-- Model & Database persistence conventions
-- Naming conventions (files, variables, interfaces)
-
-Return ONLY valid JSON matching this schema:
-{
-  "featureName": "string",
-  "architectureSummary": "string",
-  "rules": [
-    {
-      "layer": "routing | service | model | general",
-      "title": "string",
-      "convention": "string",
-      "exampleGood": "string or null"
-    }
-  ]
-}
-
-Source Code from folder:
-${codeContext}
-`;
+    const learnTemplate = await getDynamicLearnPromptTemplate();
+    const prompt = learnTemplate
+      .replace('{{FOLDER_NAME}}', path.basename(resolved))
+      .replace('{{CODE_CONTEXT}}', codeContext);
 
     let rawAIResponse = '';
     try {

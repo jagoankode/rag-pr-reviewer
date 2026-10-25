@@ -9,6 +9,7 @@ import { saveReviewReport } from '../core/history.js';
 import { loadConfig } from '../core/config.js';
 import { callLLM } from '../core/llm-client.js';
 import { getDynamicAuditPromptTemplate } from '../core/prompt-manager.js';
+import { logError } from '../core/logger.js';
 import { setActiveAbortController, createProcessAbortController, clearActiveAbortController } from '../core/nav.js';
 import { FileReviewResult, PRReviewResult, LineViolation } from '../core/schema.js';
 
@@ -309,7 +310,7 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
         });
         console.log(chalk.gray(`💾 History report tersimpan di: ${chalk.underline.cyan(savedPath)}\n`));
       } catch (err: any) {
-        console.warn(chalk.yellow(`Peringatan: Gagal menyimpan report markdown: ${err.message}`));
+        logError('SaveReviewReport', err);
       }
     }
 
@@ -320,6 +321,7 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
       return;
     }
     spinner.fail(chalk.red(`Review gagal: ${error.message}`));
+    logError('ReviewCommand', error, { options });
     console.log(chalk.yellow('\n💡 Tips: Pastikan konfigurasi AI Provider, API key, atau nama branch sudah benar di menu TUI.\n'));
     return;
   } finally {

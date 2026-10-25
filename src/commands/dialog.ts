@@ -7,8 +7,10 @@ import {
 } from '../core/nav.js';
 import { loadConfig } from '../core/config.js';
 import { callLLM } from '../core/llm-client.js';
-import { searchRelevantGuidelines, listAllIndexedGuidelines } from '../core/db.js';
+import { searchGuidelinesForDialog, listAllIndexedGuidelines } from '../core/db.js';
+import { getDynamicDialogPromptTemplate } from '../core/prompt-manager.js';
 import { getAppVersion } from '../core/version.js';
+import { logError } from '../core/logger.js';
 
 /**
  * Membersihkan syntax markdown agar tampil bersih dan rapi di terminal CLI.
@@ -108,28 +110,10 @@ export async function runInteractiveKnowledgeDialog(): Promise<void> {
         .map((c) => `[Judul: ${c.title} | Source: ${c.source}]\n${c.content}`)
         .join('\n\n---\n\n');
 
-      const systemPrompt = `You are an AI assistant answering questions about the team's internal coding guidelines.
-You are chatting directly in a CLI terminal interface.
-
-CRITICAL DIRECTIVES:
-1. STRICT ZERO-ASSUMPTION GROUNDING: You ONLY answer based on the STORED CONVENTIONS below.
-2. STRICT RELEVANCE & FOCUS: Answer ONLY what is explicitly asked. Do NOT explain other topics.
-   - For example: if user asks about "variable naming", explain ONLY variable naming. Do NOT include typing policy, function rules, or unrelated topics unless asked.
-3. NO MARKDOWN FORMATTING (CLI TERMINAL):
-   - DO NOT use markdown bold (no ** or __).
-   - DO NOT use markdown code blocks (no \`\`\` or \`).
-   - If providing code examples, write them as plain indented text.
-   - Use simple clean bullets (•) for lists.
-4. If not found in STORED CONVENTIONS, answer exactly: "Saya belum mempunyai informasi mengenai aturan itu."
-5. Respond in clear, polite, natural Indonesian.
-
-=== DAFTAR ATURAN TIM ===
-${allTitlesSummary || '(Belum ada aturan yang tersimpan)'}
-
-=== ISI DETAIL ATURAN YANG RELEVAN ===
-${knowledgeContext}
-=======================================
-`;
+      const dialogTemplate = await getDynamicDialogPromptTemplate();
+      const systemPrompt = dialogTemplate
+        .replace('{{ALL_TITLES_SUMMARY}}', allTitlesSummary || '(Belum ada aturan yang tersimpan)')
+        .replace('{{KNOWLEDGE_CONTEXT}}', knowledgeContext);
 
       const historyPrompt = chatHistory.length > 0
         ? `Riwayat percakapan:\n${chatHistory.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n')}\n\nPertanyaan baru:\n${cleaned}`
@@ -166,6 +150,7 @@ ${knowledgeContext}
         spinner.info(chalk.yellow('\nProses dibatalkan oleh pengguna.'));
       } else {
         spinner.fail(chalk.red(`Error: ${err.message}`));
+        logError('InteractiveDialog', err, { userPrompt: cleaned });
       }
       console.log('');
     } finally {

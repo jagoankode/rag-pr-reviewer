@@ -34,6 +34,8 @@ export const translations = {
     settingLangDesc: 'Ganti bahasa tampilan (ID / EN)',
     settingDbTitle: '💾 Database Storage Mode',
     settingDbDesc: 'Pilih mode Qdrant VPS atau Local LanceDB',
+    settingLogTitle: '📜 System Logs & Tracing',
+    settingLogDesc: 'Lihat catatan error/tracing & bersihkan log',
     settingBack: '🔙 Kembali ke Menu Utama',
 
     // Submenu Knowledge Base
@@ -86,6 +88,8 @@ export const translations = {
     settingLangDesc: 'Change display language (ID / EN)',
     settingDbTitle: '💾 Database Storage Mode',
     settingDbDesc: 'Choose Qdrant VPS or Local LanceDB',
+    settingLogTitle: '📜 System Logs & Tracing',
+    settingLogDesc: 'View error/tracing logs & clear log file',
     settingBack: '🔙 Back to Main Menu',
 
     // Submenu Knowledge Base
