@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 
 export interface DocChunk {
   id: string;
@@ -18,7 +19,7 @@ export function chunkMarkdown(content: string, sourcePath: string, sourceCategor
   
   let currentTitle = path.basename(sourcePath, path.extname(sourcePath));
   let currentBuffer: string[] = [];
-  let chunkIndex = 0;
+  const seenIds = new Set<string>();
 
   // Tentukan kategori source sesuai taksonomi collection baru
   const resolvedSource = sourceCategory || (
@@ -31,9 +32,12 @@ export function chunkMarkdown(content: string, sourcePath: string, sourceCategor
 
   const flush = () => {
     const text = currentBuffer.join('\n').trim();
-    if (text.length > 30) {
+    if (text.length > 0) {
+      const id = `doc:${createHash('sha256').update(JSON.stringify([resolvedSource, path.basename(sourcePath), currentTitle, text])).digest('hex')}`;
+      if (seenIds.has(id)) { currentBuffer = []; return; }
+      seenIds.add(id);
       chunks.push({
-        id: `${path.basename(sourcePath)}#${chunkIndex++}`,
+        id,
         source: resolvedSource,
         title: currentTitle,
         content: text,
@@ -87,5 +91,5 @@ export async function scanDocFiles(dirPath: string): Promise<string[]> {
     await walk(dirPath);
   }
 
-  return results;
+  return results.sort();
 }

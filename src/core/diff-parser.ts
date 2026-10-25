@@ -11,6 +11,7 @@ export interface AnnotatedFileDiff {
   file: string;
   annotatedText: string;
   addedLinesCount: number;
+  unavailable?: string;
 }
 
 /**
@@ -22,9 +23,10 @@ export function parseAnnotatedDiffFiles(rawDiff: string): AnnotatedFileDiff[] {
   const result: AnnotatedFileDiff[] = [];
 
   for (const file of parsedFiles) {
-    const filePath = file.to || file.from || 'unknown';
+    const filePath = file.deleted ? file.from || 'unknown' : file.to || file.from || 'unknown';
     // Skip deleted files or binary files without change chunks
     if (file.deleted || file.chunks.length === 0) {
+      result.push({ file: filePath, annotatedText: `### File: ${filePath}`, addedLinesCount: 0, unavailable: file.deleted ? 'Deleted-file semantics not supported' : 'Binary or metadata-only change not supported' });
       continue;
     }
 

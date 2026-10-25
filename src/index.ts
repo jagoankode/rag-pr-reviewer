@@ -89,6 +89,7 @@ program
   .option('--no-save', 'Disable saving review report to markdown in .lumio-reviews/')
   .option('--output-dir <path>', 'Custom directory to save markdown reports (default: .lumio-reviews)')
   .option('--json', 'Output review result as raw JSON')
+  .option('--core-only', 'Run deterministic checkers without optional AI advisory')
   .action(async (options) => {
     // Tier 1: Check App Version
     await checkAndUpgradeApp();

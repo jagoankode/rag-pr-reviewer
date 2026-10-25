@@ -6,8 +6,8 @@ import { AppConfig, loadConfig, resolveProviderForModel } from './config.js';
  * Fungsi ini menangani SSE parsing dan standard JSON secara native tanpa ketergantungan
  * pada parser kaku bawaan library luar.
  */
-export async function callLLM(prompt: string, modelOverride?: string, signal?: AbortSignal): Promise<string> {
-  const config = await loadConfig();
+export async function callLLM(prompt: string, modelOverride?: string, signal?: AbortSignal, frozenConfig?: AppConfig, settings?: { temperature?: number }): Promise<string> {
+  const config = frozenConfig || await loadConfig();
   const resolved = resolveProviderForModel(config, modelOverride);
   
   const apiKey = process.env.OPENAI_API_KEY || resolved.apiKey;
@@ -36,6 +36,7 @@ export async function callLLM(prompt: string, modelOverride?: string, signal?: A
       signal,
       body: JSON.stringify({
         model,
+        ...settings,
         messages: [
           {
             role: 'user',

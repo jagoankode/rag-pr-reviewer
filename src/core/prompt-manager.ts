@@ -51,6 +51,12 @@ Your ONLY job is to verify if this code, its file name, and its module folder vi
 6. If the file, its name, and its folder adhere to all registered conventions, return empty violations array [].
 7. SuggestedFix must be an actionable replacement code snippet or null if not applicable.
 
+### GRANULARITY & ATOMIC VIOLATIONS DIRECTIVE (1 MISTAKE = 1 COMMENT):
+- STRICT ATOMICITY: Every single distinct violation MUST be emitted as an INDEPENDENT object in the "violations" array.
+- NEVER group, bundle, or concatenate multiple violations into a single bulleted or compound comment.
+- If a single file or line has 5 distinct mistakes, produce exactly 5 separate violation entries in the array, each pinpointing the exact line and its specific rule.
+- Each violation comment must be concise, dedicated solely to THAT specific mistake, and never mention other unrelated errors in the same comment.
+
 Return strictly a JSON object with this shape:
 {
   "violations": [

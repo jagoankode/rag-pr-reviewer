@@ -30,7 +30,7 @@ export async function getGitDiff(options: GitDiffOptions = {}): Promise<string> 
     }
   }
 
-  const args = ['diff'];
+  const args = ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--full-index', '--no-renames', '--diff-algorithm=myers', '--no-indent-heuristic', '--unified=3', '--src-prefix=a/', '--dst-prefix=b/'];
 
   if (options.staged) {
     args.push('--staged');

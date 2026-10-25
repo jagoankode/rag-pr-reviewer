@@ -7,7 +7,7 @@ import os from 'os';
 import crypto from 'crypto';
 import chalk from 'chalk';
 import { DocChunk } from './chunker.js';
-import { getActiveAIProvider, loadConfig, getConfigDir } from './config.js';
+import { AppConfig, getActiveAIProvider, loadConfig, getConfigDir } from './config.js';
 import { createTfIdfIndex } from './local-embedder.js';
 import { getNormHash } from './dedup.js';
 import { syncGuidelinesRules, readCachedRules } from './updater.js';
@@ -158,7 +158,7 @@ async function generateVectors(texts: string[], targetDimensions?: number): Prom
       return embeddings;
     }
   } catch (err: any) {
-    logError('Embedding', err, { model, textsCount: texts.length });
+    logError('Embedding', err, { model: config.embeddingModel, textsCount: texts.length });
   }
 
   // Local TF-IDF Fallback

@@ -63,8 +63,25 @@ ${result.summary}
 ## Line-by-Line Code Convention Violations (${result.violations.length})
 `;
 
+  if (result.reviewSnapshot) {
+    const s = result.reviewSnapshot;
+    const metadata = `
+## Reproducibility
+
+- **Review ID:** \`${s.fingerprint}\`
+- **Base:** \`${s.base}\`
+- **Head:** \`${s.head}\`
+- **Merge base:** \`${s.mergeBase}\`
+- **Engine:** \`${s.engine}\`
+- **Rules:** \`${s.rules}\`
+- **Input digest:** \`${s.inputs}\`
+- **Mode / scope:** ${s.mode} / ${s.scope}
+
+`;
+    md = md.replace('## Line-by-Line', metadata + '## Line-by-Line');
+  }
   if (result.violations.length === 0) {
-    md += `\n*Tidak ada pelanggaran code convention yang ditemukan pada baris yang diubah.*\n`;
+    md += `\n*No confirmed violations. This is not a clean approval unless status is APPROVE and coverage is complete.*\n`;
   } else {
     result.violations.forEach((v, index) => {
       const severity = v.severity.toUpperCase();
@@ -74,6 +91,7 @@ ${result.summary}
 
 - **Severity:** [${severity}]
 - **Rule:** \`${v.rule}\`
+- **Rule ID / checker:** \`${v.ruleId || "legacy"} / ${v.check || "legacy"}\`
 - **Comment:** ${v.comment}
 `;
       if (v.suggestedFix) {
@@ -96,6 +114,15 @@ ${v.suggestedFix}
     });
   }
 
+  if (result.coverage) {
+    md += '\n## Deterministic rule coverage\n\n';
+    for (const c of result.coverage) md += `- ${c.file} [${c.ruleId}]: **${c.status}** — ${c.reason}\n`;
+  }
+  if (result.advisory?.length || result.advisoryNotes?.length) {
+    md += '\n## Unverified AI advisory — may vary, never determines core verdict\n\n';
+    for (const v of result.advisory || []) md += `- ${v.file}:${v.line} [${v.ruleId}]: ${v.comment}\n`;
+    for (const note of result.advisoryNotes || []) md += `- ${note}\n`;
+  }
   md += `\n\n*Audited by Lumio (https://github.com/jagoankode/rag-pr-reviewer)*\n`;
   return md;
 }

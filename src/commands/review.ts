@@ -1,16 +1,19 @@
+import { execFileSync } from 'child_process';
+import { resolveReviewRefs, snapshotReview } from '../core/review-snapshot.js';
 import chalk from 'chalk';
 import ora from 'ora';
-import path from 'path';
-import fs from 'fs';
 import { isGitRepo, getGitDiff } from '../core/git.js';
 import { parseAnnotatedDiffFiles } from '../core/diff-parser.js';
-import { searchRelevantGuidelines } from '../core/db.js';
+import { loadReviewRules } from '../core/review-rules.js';
+import { captureReviewInputs } from '../core/review-input.js';
+import { auditFile, coreAudit, summarizeAudit, FileAudit } from '../core/review-engine.js';
+import { buildHybridPrompt } from '../core/review-prompt.js';
 import { saveReviewReport } from '../core/history.js';
 import { loadConfig } from '../core/config.js';
 import { callLLM } from '../core/llm-client.js';
-import { getDynamicAuditPromptTemplate } from '../core/prompt-manager.js';
+
 import { logError } from '../core/logger.js';
-import { setActiveAbortController, createProcessAbortController, clearActiveAbortController } from '../core/nav.js';
+import { createProcessAbortController, clearActiveAbortController } from '../core/nav.js';
 import { FileReviewResult, PRReviewResult, LineViolation } from '../core/schema.js';
 
 export interface ReviewOptions {
@@ -23,6 +26,7 @@ export interface ReviewOptions {
   model?: string;
   limit?: number;
   json?: boolean;
+  coreOnly?: boolean;
   saveReport?: boolean;
   outputDir?: string;
 }
@@ -104,12 +108,15 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
       spinner.text = chalk.blue(`Mengambil git diff terhadap branch: ${targetBranch}...`);
     }
 
+    // Fetch before resolving refs, then use immutable SHAs for both diff and content.
+    if (options.fetchRemote) execFileSync('git', ['fetch', '--all', '--prune'], { stdio: 'pipe' });
+    const refs = resolveReviewRefs({ ...options, source: sourceBranch, target: targetBranch });
     const rawDiff = await getGitDiff({
       staged: options.staged,
       branch: targetBranch,
-      targetBranch: targetBranch,
-      sourceBranch: sourceBranch,
-      fetchRemote: options.fetchRemote,
+      targetBranch: targetBranch ? refs.base : undefined,
+      sourceBranch: sourceBranch && targetBranch ? refs.head : undefined,
+      fetchRemote: false,
     });
 
     if (abortController.signal.aborted) {
@@ -133,7 +140,7 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     }
 
     spinner.text = chalk.cyan('Mem-parse diff per file...');
-    const fileDiffs = parseAnnotatedDiffFiles(rawDiff);
+    const fileDiffs = parseAnnotatedDiffFiles(rawDiff).sort((a,b) => a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
 
     if (fileDiffs.length === 0) {
       spinner.info(chalk.yellow('Tidak ada perubahan baris kode (mungkin hanya file biner/dihapus).'));
@@ -146,144 +153,23 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     const totalFiles = fileDiffs.length;
     spinner.succeed(chalk.green(`Ditemukan ${totalFiles} file yang berubah. Memulai analisis per file...\n`));
 
-    const allViolations: LineViolation[] = [];
-    const generalFeedback: string[] = [];
-
-    // Iterasi per file dengan progress indicator real-time [1 dari N file]
-    for (let i = 0; i < totalFiles; i++) {
-      if (abortController.signal.aborted) {
-        console.log(chalk.yellow('\n⚠️  Review dibatalkan oleh pengguna di tengah proses.'));
-        break;
-      }
-
-      const fileDiff = fileDiffs[i];
-      const progressLabel = `[${i + 1}/${totalFiles}]`;
-      const fileSpinner = ora(
-        chalk.magenta(`${progressLabel} Menganalisis ${chalk.bold.underline(fileDiff.file)} (${fileDiff.addedLinesCount} baris diff)... (Ctrl+C: Batal)`)
-      ).start();
-
-      try {
-        // 1. Baca seluruh baris fisik file lokal (All-Line Code Awareness)
-        const fullFilePath = path.resolve(process.cwd(), fileDiff.file);
-        let allFileLinesText = '';
-        if (fs.existsSync(fullFilePath)) {
-          try {
-            const rawContent = fs.readFileSync(fullFilePath, 'utf-8');
-            const lines = rawContent.split('\n');
-            allFileLinesText = lines.map((line, idx) => `L${idx + 1}: ${line}`).join('\n');
-          } catch {}
-        }
-
-        // 2. Baca konteks folder dan struktur modul (Folder & Scaffold Awareness)
-        const folderDir = path.dirname(fullFilePath);
-        const folderRelative = path.relative(process.cwd(), folderDir) || '.';
-        let folderFilesList: string[] = [];
-        if (fs.existsSync(folderDir)) {
-          try {
-            folderFilesList = fs.readdirSync(folderDir).filter((f) => !f.startsWith('.'));
-          } catch {}
-        }
-
-        // 3. Cari RAG guideline yang relevan dari Vector DB (RAG)
-        let relevantRules: string[] = [];
-        try {
-          // Cari aturan terkait kode diff & file
-          const codeQuery = `File: ${fileDiff.file}\n${fileDiff.annotatedText}`;
-          // Cari juga aturan terkait arsitektur modul & scaffold folder
-          const scaffoldQuery = `Module structure scaffold required files for ${folderRelative} folder with files: ${folderFilesList.join(', ')}`;
-          
-          const [codeChunks, scaffoldChunks] = await Promise.all([
-            searchRelevantGuidelines(codeQuery, 5),
-            searchRelevantGuidelines(scaffoldQuery, 3),
-          ]);
-
-          const seen = new Set<string>();
-          for (const c of [...codeChunks, ...scaffoldChunks]) {
-            if (!seen.has(c.id)) {
-              seen.add(c.id);
-              relevantRules.push(`[Rule Title: ${c.title}]\n${c.content}`);
-            }
-          }
-        } catch {
-          // fallback jika db kosong / error
-        }
-
-        // STRICT GROUNDING: Jika tidak ada rule sama sekali di Vector DB, JANGAN izinkan AI berasumsi!
-        if (relevantRules.length === 0) {
-          fileSpinner.succeed(chalk.gray(`${progressLabel} ${fileDiff.file} ➔ Bersih (Tidak ada aturan terkait di Vector DB)`));
-          continue;
-        }
-
-        const reviewScope = options.scope || 'full';
-        const isDiffOnly = reviewScope === 'diff';
-        const scopeInstruction = isDiffOnly
-          ? '4. DIFF-ONLY AUDIT: Inspect ONLY the newly added or modified lines in the RECENT GIT CHANGES (DIFF) marked with "+ L<number>". Do NOT flag unchanged or pre-existing code outside the diff changes.'
-          : '4. WHOLE FILE AUDIT: Inspect all lines of the file that was modified. If any line violates registered conventions (e.g., styling, forbidden types, misplaced hooks, missing JSDoc, double fallback, naming), report the exact line number `L<number>`.';
-
-        // Ambil dynamic audit prompt template dari DB/cache
-        const promptTemplate = await getDynamicAuditPromptTemplate();
-
-        const prompt = promptTemplate
-          .replace(/\{\{REGISTERED_CONVENTIONS\}\}/g, relevantRules.join('\n\n---\n\n'))
-          .replace(/\{\{FILE_PATH\}\}/g, fileDiff.file)
-          .replace(/\{\{CONTAINING_FOLDER\}\}/g, folderRelative)
-          .replace(/\{\{FOLDER_FILES\}\}/g, folderFilesList.join(', '))
-          .replace(/\{\{FILE_CONTENT\}\}/g, allFileLinesText || fileDiff.annotatedText)
-          .replace(/\{\{FILE_DIFF\}\}/g, fileDiff.annotatedText)
-          .replace(/\{\{SCOPE_INSTRUCTION\}\}/g, scopeInstruction);
-
-        let object: FileReviewResult | null = null;
-
-        try {
-          const rawResponse = await callLLM(prompt, modelName, abortController.signal);
-          object = extractReviewResult(rawResponse);
-        } catch (callErr: any) {
-          if (abortController.signal.aborted || callErr.name === 'AbortError') {
-            fileSpinner.warn(chalk.yellow(`${progressLabel} ${fileDiff.file} ➔ Dibatalkan (Aborted).`));
-            break;
-          }
-          throw callErr;
-        }
-
-        if (object && object.violations && object.violations.length > 0) {
-          allViolations.push(...object.violations);
-          fileSpinner.warn(
-            chalk.yellow(`${progressLabel} ${fileDiff.file} ➔ Ditemukan ${object.violations.length} pelanggaran`)
-          );
-        } else {
-          fileSpinner.succeed(chalk.gray(`${progressLabel} ${fileDiff.file} ➔ Bersih (Clean)`));
-        }
-
-        if (object && object.notes && object.notes.length > 0) {
-          generalFeedback.push(...object.notes);
-        }
-      } catch (err: any) {
-        if (abortController.signal.aborted || err.name === 'AbortError') {
-          fileSpinner.warn(chalk.yellow(`${progressLabel} ${fileDiff.file} ➔ Dibatalkan.`));
-          break;
-        }
-        fileSpinner.fail(chalk.red(`${progressLabel} ${fileDiff.file} ➔ Gagal dianalisis: ${err.message}`));
-      }
+    const rules = await loadReviewRules(config);
+    const inputs = captureReviewInputs(fileDiffs, { ...options, target: targetBranch ? refs.base : undefined, source: sourceBranch && targetBranch ? refs.head : undefined });
+    const audits: FileAudit[] = [];
+    for (const input of inputs) {
+      if (abortController.signal.aborted) return;
+      const fileSpinner = ora(`Auditing ${input.file} (${rules.rules.length} frozen rules)...`).start();
+      const audit = options.coreOnly ? coreAudit(input, rules) : await auditFile(input, rules, findings => callLLM(
+        buildHybridPrompt(input, rules, findings), modelName, AbortSignal.any([abortController.signal, AbortSignal.timeout(30_000)]), config, { temperature: 0 }
+      ));
+      audits.push(audit);
+      if (!audit.complete) fileSpinner.warn(`${input.file}: INCOMPLETE (${audit.violations.length} findings)`);
+      else if (audit.violations.length) fileSpinner.warn(`${input.file}: ${audit.violations.length} findings`);
+      else fileSpinner.succeed(`${input.file}: no findings${rules.rules.length ? '' : ' (no active rules; not assessed)'}`);
     }
-
-    if (abortController.signal.aborted) {
-      console.log(chalk.yellow('\nℹ️  Proses review dihentikan dan kembali ke menu.\n'));
-      return;
-    }
-
-    // Tentukan status akhir PR
-    const hasErrors = allViolations.some((v) => v.severity === 'error');
-    const finalStatus: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT' =
-      hasErrors ? 'REQUEST_CHANGES' : allViolations.length > 0 ? 'COMMENT' : 'APPROVE';
-
-    const finalSummary = `Telah selesai mereview ${totalFiles} file yang diubah. Ditemukan total ${allViolations.length} pelanggaran code convention.`;
-
-    const reviewResult: PRReviewResult = {
-      status: finalStatus,
-      summary: finalSummary,
-      violations: allViolations,
-      generalFeedback: Array.from(new Set(generalFeedback)),
-    };
+    if (abortController.signal.aborted) return;
+    const reviewResult = summarizeAudit(audits, rules);
+    reviewResult.reviewSnapshot = snapshotReview(inputs, rules, rawDiff, refs, options.scope || 'full');
 
     if (options.json) {
       console.log(JSON.stringify(reviewResult, null, 2));
@@ -340,9 +226,18 @@ function printReviewTerminalReport(result: PRReviewResult) {
   console.log(chalk.bold.cyan('═════════════════════ PULL REQUEST REVIEW REPORT ═════════════════════'));
   console.log(`Status  : ${statusColor(result.status)}`);
   console.log(`Summary : ${result.summary}\n`);
+  if (result.reviewSnapshot) {
+    const s = result.reviewSnapshot;
+    console.log(`Review ID: ${s.fingerprint}`);
+    console.log(`Base     : ${s.base}\nHead     : ${s.head}\nMerge base: ${s.mergeBase}`);
+    console.log(`Engine   : ${s.engine} | ${s.mode} | scope=${s.scope}`);
+    console.log(`Rules    : ${s.rules}`);
+  }
+  if (result.coverage) console.log(`Coverage : ${['PASS','FAIL','NOT_APPLICABLE','UNCERTAIN'].map(status => `${status}=${result.coverage!.filter(c => c.status === status).length}`).join(' | ')}\n`);
+  console.log(chalk.yellow('AI analysis is unverified advisory only; it never changes the core verdict.'));
 
   if (result.violations.length === 0) {
-    console.log(chalk.green('✔ Tidak ditemukan pelanggaran code convention pada semua file yang diubah!'));
+    console.log((result.complete === false || result.status !== 'APPROVE' ? chalk.yellow : chalk.green)(result.status === 'APPROVE' ? '✔ No violations found with complete rule coverage.' : 'No confirmed violations; review does not provide a clean verdict.'));
   } else {
     console.log(chalk.bold.red(`🚨 Line-by-Line Violations & PR Comments (${result.violations.length}):\n`));
 
@@ -369,6 +264,11 @@ function printReviewTerminalReport(result: PRReviewResult) {
     result.generalFeedback.forEach((note) => {
       console.log(` • ${note}`);
     });
+  }
+
+  if (result.advisory?.length) {
+    console.log(chalk.yellow('\nUnverified AI advisory (may vary between runs; not confirmed violations):'));
+    result.advisory.forEach(v => console.log(` • ${v.file}:${v.line} [${v.ruleId}] ${v.comment}`));
   }
 
   console.log(chalk.bold.cyan('\n══════════════════════════════════════════════════════════════════════\n'));
