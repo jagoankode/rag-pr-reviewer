@@ -90,6 +90,7 @@ program
   .option('--output-dir <path>', 'Custom directory to save markdown reports (default: .lumio-reviews)')
   .option('--json', 'Output review result as raw JSON')
   .option('--core-only', 'Run deterministic checkers without optional AI advisory')
+  .option('--max-violations <number>', 'Batas maksimal temuan sebelum review berhenti & generate report', (val) => parseInt(val, 10))
   .action(async (options) => {
     // Tier 1: Check App Version
     await checkAndUpgradeApp();

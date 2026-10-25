@@ -29,6 +29,7 @@ export interface ReviewOptions {
   coreOnly?: boolean;
   saveReport?: boolean;
   outputDir?: string;
+  maxViolations?: number; // Batas maksimal temuan kumulatif sebelum berhenti & generate report
 }
 
 export function extractReviewResult(rawText: string): FileReviewResult {
@@ -156,19 +157,31 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     const rules = await loadReviewRules(config);
     const inputs = captureReviewInputs(fileDiffs, { ...options, target: targetBranch ? refs.base : undefined, source: sourceBranch && targetBranch ? refs.head : undefined });
     const audits: FileAudit[] = [];
+    const maxViolations = typeof options.maxViolations === 'number' && options.maxViolations > 0 ? options.maxViolations : undefined;
+    let totalViolationsCount = 0;
+
     for (const input of inputs) {
       if (abortController.signal.aborted) return;
-      const fileSpinner = ora(`Auditing ${input.file} (${rules.rules.length} frozen rules)...`).start();
+      const fileSpinner = ora(`Auditing ${input.file}...`).start();
       const audit = options.coreOnly ? coreAudit(input, rules) : await auditFile(input, rules, findings => callLLM(
         buildHybridPrompt(input, rules, findings), modelName, AbortSignal.any([abortController.signal, AbortSignal.timeout(30_000)]), config, { temperature: 0 }
       ));
       audits.push(audit);
+      totalViolationsCount += audit.violations.length;
+
       if (audit.violations.length) {
         fileSpinner.fail(`${input.file}: ${audit.violations.length} violations found`);
       } else if (!audit.complete) {
         fileSpinner.info(`${input.file}: Clean (needs senior review for semantic rules)`);
       } else {
         fileSpinner.succeed(`${input.file}: All rules passed`);
+      }
+
+      if (maxViolations && totalViolationsCount >= maxViolations) {
+        if (!options.json) {
+          console.log(chalk.yellow(`\n⚠️  Batas maksimal temuan tercapai (${totalViolationsCount} >= ${maxViolations} violations). Menghentikan review & langsung membuat report...\n`));
+        }
+        break;
       }
     }
     if (abortController.signal.aborted) return;

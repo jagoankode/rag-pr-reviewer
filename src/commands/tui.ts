@@ -495,7 +495,16 @@ async function reviewWorkflowUI(config: AppConfig) {
     selectedModel = selectedModel.trim();
   }
 
-  console.log(chalk.gray(`\nℹ️  Model: ${chalk.cyan(selectedModel)} | Scope: ${chalk.cyan(reviewScope.toUpperCase())} | Output: ${chalk.cyan(outputDir)}\n`));
+  const maxViolationsInput = await input({
+    message: 'Batas maksimal temuan sebelum generate report (kosongkan / tekan enter untuk tanpa batas):',
+  });
+  let maxViolations: number | undefined;
+  if (maxViolationsInput && maxViolationsInput !== 'back' && !isNaN(parseInt(maxViolationsInput, 10))) {
+    maxViolations = parseInt(maxViolationsInput, 10);
+  }
+
+  const limitDesc = maxViolations ? `Max Violations: ${chalk.yellow(maxViolations)}` : 'Max Violations: Unlimited';
+  console.log(chalk.gray(`\nℹ️  Model: ${chalk.cyan(selectedModel)} | Scope: ${chalk.cyan(reviewScope.toUpperCase())} | ${limitDesc} | Output: ${chalk.cyan(outputDir)}\n`));
   await reviewCommand({
     staged: diffType === 'staged',
     target: targetBranch,
@@ -504,6 +513,7 @@ async function reviewWorkflowUI(config: AppConfig) {
     fetchRemote: doFetch,
     model: selectedModel,
     outputDir: outputDir,
+    maxViolations,
     saveReport: true,
   });
 

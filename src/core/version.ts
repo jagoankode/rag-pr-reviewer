@@ -14,7 +14,6 @@ export function getAppVersion(): string {
     path.resolve(currentDir, '../package.json'),
     path.resolve(currentDir, '../../package.json'),
     path.resolve(currentDir, 'package.json'),
-    path.resolve(process.cwd(), 'package.json'),
   ];
 
   for (const pkgPath of candidatePaths) {
