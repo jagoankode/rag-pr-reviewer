@@ -141,16 +141,21 @@ export async function select<T>(
  * Otomatis menyematkan hint seragam "(esc back)" di akhir message
  */
 export async function input(
-  options: Parameters<typeof inqInput>[0],
+  options: Parameters<typeof inqInput>[0] & { hideEscHint?: boolean },
   fallbackValue: string = 'back'
 ): Promise<string> {
   const rawMsg = options.message.trim();
-  const uniformMessage = rawMsg.includes('esc') || rawMsg.includes('Esc')
+  const uniformMessage = options.hideEscHint || rawMsg.includes('esc') || rawMsg.includes('Esc')
     ? rawMsg
     : `${rawMsg} ${chalk.gray('(esc back)')}`;
 
+  const theme = {
+    prefix: '',
+    ...options.theme,
+  };
+
   return withEscapeHandler(async (signal) => {
-    const val = await inqInput({ ...options, message: uniformMessage }, { signal });
+    const val = await inqInput({ ...options, message: uniformMessage, theme }, { signal });
     const trimmed = (val || '').trim().toLowerCase();
     if (trimmed === 'b' || trimmed === 'back') {
       return fallbackValue;

@@ -141,10 +141,10 @@ ${codeContext}
     });
     console.log(chalk.bold.cyan('\n═══════════════════════════════════════════════════════════════════════\n'));
 
-    // Siapkan chunks untuk disimpan ke LanceDB
+    // Siapkan chunks untuk disimpan ke database
     const chunks: DocChunk[] = mined.rules.map((rule, idx) => ({
       id: `mined_${path.basename(resolved)}_${idx}_${Date.now()}`,
-      source: `local_feature:${resolved}`,
+      source: 'feature-learn',
       title: `${mined.featureName} > [${rule.layer.toUpperCase()}] ${rule.title}`,
       content: `${rule.convention}\n\nArchitecture Context:\n${mined.architectureSummary}${
         rule.exampleGood ? `\n\nExample Good Pattern:\n${rule.exampleGood}` : ''

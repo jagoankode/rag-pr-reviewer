@@ -74,11 +74,7 @@ export async function inspectGuidelinesCommand(): Promise<void> {
           selected.content = newContent.trim();
           spinner.succeed(chalk.green('✔ Aturan berhasil diperbarui dan disinkronkan ke Vector DB!'));
         } catch (err: any) {
-          if (err.message?.includes('Forbidden') || err.message?.includes('403') || err.message?.includes('Global manage access')) {
-            spinner.fail(chalk.red('❌ Akses Ditolak: Anda menggunakan API Key Read-Only (Developer). Hanya Admin yang memiliki hak mengedit aturan tim.'));
-          } else {
-            spinner.fail(chalk.red(`Gagal mengupdate aturan: ${err.message}`));
-          }
+          spinner.fail(chalk.red(err.message));
         }
       }
 
@@ -95,11 +91,7 @@ export async function inspectGuidelinesCommand(): Promise<void> {
             spinner.succeed(chalk.green(`✔ Aturan "${selected.title}" berhasil dihapus!`));
             break; // kembali ke list utama karena item sudah terhapus
           } catch (err: any) {
-            if (err.message?.includes('Forbidden') || err.message?.includes('403') || err.message?.includes('Global manage access')) {
-              spinner.fail(chalk.red('❌ Akses Ditolak: Anda menggunakan API Key Read-Only (Developer). Hanya Admin yang memiliki hak menghapus aturan tim.'));
-            } else {
-              spinner.fail(chalk.red(`Gagal menghapus aturan: ${err.message}`));
-            }
+            spinner.fail(chalk.red(err.message));
           }
         }
       }

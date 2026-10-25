@@ -12,7 +12,7 @@ export interface DocChunk {
  * Memotong dokumen markdown berdasarkan header (#, ##, ###)
  * agar konteks aturan/guideline tidak terputus di tengah kalimat.
  */
-export function chunkMarkdown(content: string, sourcePath: string): DocChunk[] {
+export function chunkMarkdown(content: string, sourcePath: string, sourceCategory?: string): DocChunk[] {
   const lines = content.split('\n');
   const chunks: DocChunk[] = [];
   
@@ -20,12 +20,21 @@ export function chunkMarkdown(content: string, sourcePath: string): DocChunk[] {
   let currentBuffer: string[] = [];
   let chunkIndex = 0;
 
+  // Tentukan kategori source sesuai taksonomi collection baru
+  const resolvedSource = sourceCategory || (
+    /fe(\.md|-code-convention)?$/i.test(sourcePath) || sourcePath.toLowerCase().includes('convention')
+      ? 'code-convention'
+      : /^https?:\/\//i.test(sourcePath)
+      ? 'www-data'
+      : 'code-convention'
+  );
+
   const flush = () => {
     const text = currentBuffer.join('\n').trim();
     if (text.length > 30) {
       chunks.push({
         id: `${path.basename(sourcePath)}#${chunkIndex++}`,
-        source: sourcePath,
+        source: resolvedSource,
         title: currentTitle,
         content: text,
       });

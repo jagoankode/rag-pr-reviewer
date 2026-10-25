@@ -1,5 +1,6 @@
 import * as lancedb from '@lancedb/lancedb';
 import { QdrantClient } from '@qdrant/js-client-rest';
+import { createOpenAI } from '@ai-sdk/openai';
 import { embed, embedMany } from 'ai';
 import path from 'path';
 import os from 'os';
@@ -32,6 +33,15 @@ export async function getDb(): Promise<lancedb.Connection> {
     dbInstance = await lancedb.connect(dbDir);
   }
   return dbInstance;
+}
+
+function wrapDbWriteError(err: any): Error {
+  const status = err?.status ?? err?.statusCode;
+  const msg = String(err?.message || err?.data?.status?.error || err || '');
+  if (status === 401 || status === 403 || /unauthorized|forbidden|permission denied/i.test(msg)) {
+    return new Error('Anda tidak dapat menambah atau mengubah aturan tim.');
+  }
+  return err instanceof Error ? err : new Error(String(err));
 }
 
 export function getVectorSize(config: { provider?: string; embeddingModel?: string }): number {
@@ -87,40 +97,72 @@ export async function getQdrantClient(): Promise<{ client: QdrantClient; collect
   return { client: qdrantInstance, collection };
 }
 
+async function resolveEmbeddingClient(config: AppConfig) {
+  // 1. Cek apakah ada provider sumopod terdaftar untuk embedding
+  const sumopod = config.providers?.sumopod;
+  if (sumopod && sumopod.apiKey) {
+    const rawBase = sumopod.baseUrl || 'https://ai.sumopod.com';
+    const baseURL = rawBase.endsWith('/v1') ? rawBase : `${rawBase.replace(/\/+$/, '')}/v1`;
+    const model = sumopod.models?.[0] || 'text-embedding-3-large';
+    const client = createOpenAI({
+      apiKey: sumopod.apiKey,
+      baseURL,
+    });
+    return { client, model };
+  }
+
+  // 2. Cek embeddingApiKey & embeddingBaseUrl eksplisit
+  if (config.embeddingApiKey) {
+    const rawBase = config.embeddingBaseUrl || 'https://api.openai.com/v1';
+    const baseURL = rawBase.endsWith('/v1') ? rawBase : `${rawBase.replace(/\/+$/, '')}/v1`;
+    const model = config.embeddingModel && config.embeddingModel !== 'local'
+      ? config.embeddingModel
+      : 'text-embedding-3-large';
+    const client = createOpenAI({
+      apiKey: config.embeddingApiKey,
+      baseURL,
+    });
+    return { client, model };
+  }
+
+  // 3. Fallback ke getActiveAIProvider
+  const { embeddingClient, config: aiConfig } = await getActiveAIProvider();
+  return {
+    client: embeddingClient,
+    model: aiConfig.embeddingModel || 'local',
+  };
+}
+
 async function generateVectors(texts: string[], targetDimensions?: number): Promise<number[][]> {
-  const { embeddingClient, config } = await getActiveAIProvider();
-  const embModel = config.embeddingModel || 'local';
+  const config = await loadConfig();
   const dimensions = targetDimensions || getVectorSize(config);
 
-  // Jika provider 9router atau model diset 'local' atau provider tidak support embeddings:
-  // gunakan built-in deterministic TF-IDF vectorizer (0% dependensi ke remote embedding)
-  if (config.provider === '9router' || embModel === 'local') {
-    const vectorizer = createTfIdfIndex(texts, dimensions);
-    return texts.map((t) => vectorizer(t));
-  }
-
   try {
-    // Timeout safeguard 12 detik agar tidak menggantung selamanya
-    const embeddingPromise = embedMany({
-      model: embeddingClient.embedding(embModel),
-      values: texts,
-    });
+    const { client, model } = await resolveEmbeddingClient(config);
 
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
-        reject(new Error(`Timeout memanggil endpoint embedding ${embModel} (12 detik)`));
-      }, 12000);
-    });
+    if (model && model !== 'local') {
+      const embeddingPromise = embedMany({
+        model: client.embedding(model),
+        values: texts,
+      });
 
-    const { embeddings } = await Promise.race([embeddingPromise, timeoutPromise]);
-    return embeddings;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`Timeout memanggil endpoint embedding ${model} (12 detik)`));
+        }, 12000);
+      });
+
+      const { embeddings } = await Promise.race([embeddingPromise, timeoutPromise]);
+      return embeddings;
+    }
   } catch (err: any) {
-    // Fallback otomatis ke local embedder agar penyimpanan tidak pernah hang
-    console.warn(`\n⚠️  Model/Endpoint embedding (${embModel}) tidak merespons: ${err.message}.`);
-    console.warn('⚡ Mengalihkan otomatis ke local text vectorizer agar aturan tetap tersimpan...');
-    const vectorizer = createTfIdfIndex(texts, dimensions);
-    return texts.map((t) => vectorizer(t));
+    console.warn(`\n⚠️  Model/Endpoint embedding tidak merespons: ${err.message}.`);
+    console.warn('⚡ Mengalihkan ke local text vectorizer...');
   }
+
+  // Local TF-IDF Fallback
+  const vectorizer = createTfIdfIndex(texts, dimensions);
+  return texts.map((t) => vectorizer(t));
 }
 
 export interface InsertResult {
@@ -207,22 +249,32 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
     const texts = uniqueChunks.map((c) => `${c.title}\n${c.content}`);
     const vectors = await generateVectors(texts, requiredDim);
 
-    const points = uniqueChunks.map((chunk, i) => ({
-      id: typeof chunk.id === 'string' && /^[0-9a-fA-F-]+$/.test(chunk.id) ? chunk.id : Math.floor(Math.random() * 1000000000),
-      vector: vectors[i],
-      payload: {
-        originalId: chunk.id,
-        source: chunk.source,
-        title: chunk.title,
-        content: chunk.content,
-        contentHash: getNormHash(chunk.content),
-      },
-    }));
-
-    await client.upsert(collection, {
-      wait: true,
-      points,
+    const points = uniqueChunks.map((chunk, i) => {
+      const nowIso = new Date().toISOString();
+      return {
+        id: typeof chunk.id === 'string' && /^[0-9a-fA-F-]+$/.test(chunk.id) ? chunk.id : Math.floor(Math.random() * 1000000000),
+        vector: vectors[i],
+        payload: {
+          originalId: chunk.id,
+          source: chunk.source,
+          title: chunk.title,
+          content: chunk.content,
+          contentHash: getNormHash(chunk.content),
+          status: 'ACTIVE',
+          created_at: nowIso,
+          updated_at: nowIso,
+        },
+      };
     });
+
+    try {
+      await client.upsert(collection, {
+        wait: true,
+        points,
+      });
+    } catch (err: any) {
+      throw wrapDbWriteError(err);
+    }
 
     // Pemicu update cache lokal setelah admin ingest
     await syncGuidelinesRules({ force: true, quiet: true });
@@ -332,22 +384,28 @@ export async function updateGuideline(
 
     const pointId = /^[0-9]+$/.test(id) ? Number(id) : id;
 
-    await client.upsert(collection, {
-      wait: true,
-      points: [
-        {
-          id: pointId,
-          vector: vectors[0],
-          payload: {
-            originalId: id,
-            source,
-            title: newTitle,
-            content: newContent,
-            contentHash: getNormHash(newContent),
+    try {
+      await client.upsert(collection, {
+        wait: true,
+        points: [
+          {
+            id: pointId,
+            vector: vectors[0],
+            payload: {
+              originalId: id,
+              source,
+              title: newTitle,
+              content: newContent,
+              contentHash: getNormHash(newContent),
+              status: 'ACTIVE',
+              updated_at: new Date().toISOString(),
+            },
           },
-        },
-      ],
-    });
+        ],
+      });
+    } catch (err: any) {
+      throw wrapDbWriteError(err);
+    }
 
     await syncGuidelinesRules({ force: true, quiet: true });
     return true;
@@ -388,10 +446,14 @@ export async function deleteGuideline(id: string): Promise<boolean> {
     const { client, collection } = await getQdrantClient();
     const pointId = /^[0-9]+$/.test(id) ? Number(id) : id;
 
-    await client.delete(collection, {
-      wait: true,
-      points: [pointId],
-    });
+    try {
+      await client.delete(collection, {
+        wait: true,
+        points: [pointId],
+      });
+    } catch (err: any) {
+      throw wrapDbWriteError(err);
+    }
 
     await syncGuidelinesRules({ force: true, quiet: true });
     return true;
@@ -410,7 +472,57 @@ export async function deleteGuideline(id: string): Promise<boolean> {
 }
 
 /**
- * Cari guideline relevan.
+ * Pencarian khusus Chat Dialog menggunakan Semantic Vector Search Qdrant murni.
+ * Memahami sinonim & bahasa alami (Indonesia/Inggris) tanpa perlu kamus manual.
+ * Otomatis fallback ke cache lokal jika server Qdrant tidak terjangkau.
+ */
+export async function searchGuidelinesForDialog(
+  query: string,
+  limit: number = 4
+): Promise<DocChunk[]> {
+  const config = await loadConfig();
+
+  if (config.dbType === 'qdrant') {
+    try {
+      const { client, collection } = await getQdrantClient();
+      const collInfo = await client.getCollection(collection);
+      const vectorParam = collInfo.config.params.vectors;
+      const requiredDim =
+        typeof vectorParam === 'object' && vectorParam !== null && 'size' in vectorParam
+          ? (vectorParam as any).size
+          : 3072;
+
+      // Generate query embedding vector
+      const vectors = await generateVectors([query], requiredDim);
+      const queryVector = vectors[0];
+
+      if (queryVector && queryVector.length > 0) {
+        const searchResults = await client.query(collection, {
+          query: queryVector,
+          limit,
+          with_payload: true,
+        });
+
+        if (searchResults.points && searchResults.points.length > 0) {
+          return searchResults.points.map((p: any) => ({
+            id: String(p.id),
+            source: p.payload?.source || 'remote_vps',
+            title: p.payload?.title || 'Untitled',
+            content: p.payload?.content || '',
+          }));
+        }
+      }
+    } catch (err: any) {
+      // Fallback ke local cache jika koneksi Qdrant gagal
+    }
+  }
+
+  // Fallback standar ke cache lokal
+  return searchRelevantGuidelines(query, limit);
+}
+
+/**
+ * Cari guideline relevan untuk Review PR.
  * Mode Qdrant otomatis memanfaatkan Auto-Synced Rules Cache & Lexical Matching (0 external embedding call).
  */
 export async function searchRelevantGuidelines(

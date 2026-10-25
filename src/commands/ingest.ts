@@ -164,7 +164,7 @@ export async function ingestDirectRuleCommand(title: string, content: string): P
   try {
     const chunk: DocChunk = {
       id: `rule_${Date.now()}`,
-      source: 'manual_conversation',
+      source: 'addon-knowledge',
       title: title.trim(),
       content: content.trim(),
     };
