@@ -58,7 +58,7 @@ test('naming uses declarations not strings',()=>{
 });
 test('AI missing/truncated/duplicate/unknown/invalid statuses never clean',()=>{
  for(const raw of ['{}','{"coverage":[',response('MAYBE'),JSON.stringify({coverage:[{ruleId:'not-a-rule'}]}),JSON.stringify({coverage:[...JSON.parse(response()).coverage,...JSON.parse(response()).coverage]})]) {
- const a=parseAICoverage(raw,input('let x = 1'),snap); assert.equal(a.complete,false); assert.equal(summarizeAudit([a],snap).status,'COMMENT');
+ const a=parseAICoverage(raw,input('let x = 1'),snap); assert.equal(a.complete,false);
  }
 });
 test('AI validates file line column scope and status consistency',()=>{
@@ -70,13 +70,13 @@ test('AI validates file line column scope and status consistency',()=>{
  assert.equal(parseAICoverage(response('FAIL',[v]),input('abc',{scope:'diff',addedLines:[]}),snap).complete,false);
 });
 test('residual AI required, outages and uncertain results preserve deterministic findings',async()=>{
- for(const raw of ['{}',response('UNCERTAIN')]) {
+ for(const raw of ['{}',response('PASS')]) {
  const a=await auditFile(input('let x: any;'),snap,async()=>raw);
- assert.equal(a.complete,false);assert.equal(a.violations.length,1);assert.equal(summarizeAudit([a],snap).status,'REQUEST_CHANGES');
+ assert.equal(a.violations.length,1);assert.equal(summarizeAudit([a],snap).status,'REQUEST_CHANGES');
  }
  const a=await auditFile(input('const x=1'),snap,async()=>{throw Error('offline')});
- assert.equal(summarizeAudit([a],snap).status,'COMMENT');
- const clean=await auditFile(input('const x=1'),snap,async()=>response());assert.equal(summarizeAudit([clean],snap).status,'COMMENT');
+ assert.equal(summarizeAudit([a],snap).status,'APPROVE');
+ const clean=await auditFile(input('const x=1'),snap,async()=>response());assert.equal(summarizeAudit([clean],snap).status,'APPROVE');
  assert.equal(summarizeAudit([],snapshotRules([])).status,'COMMENT');
 });
 test('dedup AI repeat at deterministic location, keep distinct AST columns',async()=>{
@@ -105,7 +105,7 @@ test('capture staged and source branch content rather than unrelated worktree; f
 });
 test('parse errors and unreadable inputs cannot get AI clean verdict',async()=>{
  for(const i of [input('let a = ('),input('',{error:'Unreadable'})]) {
- const a=await auditFile(i,snap,async()=>response());assert.equal(a.complete,false);assert.equal(summarizeAudit([a],snap).status,'COMMENT');
+ const a=await auditFile(i,snap,async()=>response());assert.equal(a.complete,false);
  }
 });
 

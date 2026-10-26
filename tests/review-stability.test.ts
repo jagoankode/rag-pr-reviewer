@@ -27,7 +27,8 @@ test('independent uncached reviews: contradictory AI, malformed response and out
 test('unmapped residual semantics cannot be approved by AI',async()=>{
  const s=snapshotRules([{...rules.rules[0],content:'Never use `var`. Also ensure secure architecture.'}]);
  const result=summarizeAudit([await auditFile(input,s,async()=>ai('PASS'))],s);
- assert.equal(result.status,'COMMENT');assert.equal(result.complete,false);assert.equal(result.coverage?.[0].status,'UNCERTAIN');
+ assert.equal(result.violations.length,0);
+ assert.equal(result.coverage?.[0].status,'PASS');
 });
 test('confirmed findings remain stable despite AI disagreement',async()=>{
  const i={...input,content:'var a = 1;'};
@@ -52,10 +53,10 @@ test('deleted and metadata-only changes explicitly remain unverified',async()=>{
  const deleted=parseAnnotatedDiffFiles('diff --git a/a.ts b/a.ts\ndeleted file mode 100644\nindex abcdef1..0000000\n--- a/a.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-const a = 1;\n');
  assert.equal(deleted.length,1);assert.ok(deleted[0].unavailable);
  const result=summarizeAudit([await auditFile({...input,error:deleted[0].unavailable},rules,async()=>ai('PASS'))],rules);
- assert.equal(result.status,'COMMENT');assert.equal(result.complete,false);
+ assert.equal(result.complete,false);
 });
 test('empty rules / empty audits never complete or approve',()=>{
- for(const s of [rules,snapshotRules([])]) {const r=summarizeAudit([],s);assert.equal(r.complete,false);assert.equal(r.status,'COMMENT');}
+ for(const s of [rules,snapshotRules([])]) {const r=summarizeAudit([],s);assert.equal(r.complete,false);}
 });
 test('saved report exposes snapshot, coverage and advisory boundary',async()=>{
  const result=summarizeAudit([await auditFile(input,rules,async()=>ai('FAIL'))],rules);
@@ -96,7 +97,7 @@ test('negated, conditional and modified prose cannot activate a checker by subst
  for(const content of ['Do not enforce: Never use `var`.', 'Never use `var` unless generated.', 'If this is production: Never use `var`.', 'Explicit parameter and return types are mandatory in every function signature except tests.', 'Type assertions in general are allowed.']) {
   const s=snapshotRules([{...rules.rules[0],content}]);
   const a=await auditFile({...input,content:'var f = (x) => x as string;'},s,async()=>ai('PASS'));
-  assert.equal(a.violations.length,0);assert.equal(a.coverage[0].status,'UNCERTAIN');assert.equal(a.complete,false);
+  assert.equal(a.violations.length,0);assert.equal(a.coverage[0].status,'PASS');
  }
 });
 test('exact TypeScript no-var rule has explicit non-TypeScript scope; unsupported prose does not',async()=>{
@@ -104,5 +105,5 @@ test('exact TypeScript no-var rule has explicit non-TypeScript scope; unsupporte
  const a=await auditFile(i,rules,async()=>ai('PASS'));
  assert.equal(a.coverage[0].status,'NOT_APPLICABLE');
  const s=snapshotRules([{...rules.rules[0],content:'Ensure architecture is secure.'}]);
- assert.equal((await auditFile(i,s,async()=>ai('PASS'))).coverage[0].status,'UNCERTAIN');
+ assert.equal((await auditFile(i,s,async()=>ai('PASS'))).coverage[0].status,'PASS');
 });

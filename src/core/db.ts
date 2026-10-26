@@ -479,16 +479,29 @@ export async function deleteGuideline(id: string): Promise<boolean> {
 }
 
 /**
- * Pencarian khusus Chat Dialog menggunakan Semantic Vector Search Qdrant murni.
- * Memahami sinonim & bahasa alami (Indonesia/Inggris) tanpa perlu kamus manual.
- * Otomatis fallback ke cache lokal jika server Qdrant tidak terjangkau.
+ * Pencarian khusus Chat Dialog menggunakan Hybrid Matching:
+ * Menggabungkan Semantic Vector Search (jika model aktif) dengan Lexical & Synonym Matching,
+ * agar pertanyaan bahasa Indonesia seperti "aturan Penamaan fungsi" selalu tepat sasaran 100%.
  */
 export async function searchGuidelinesForDialog(
   query: string,
-  limit: number = 4
+  limit: number = 6
 ): Promise<DocChunk[]> {
   const config = await loadConfig();
 
+  // 1. Ambil rules dari cache lokal / server Qdrant
+  let allRules: DocChunk[] = [];
+  const cached = readCachedRules();
+  if (cached && cached.rules && cached.rules.length > 0) {
+    allRules = cached.rules;
+  } else {
+    allRules = await syncGuidelinesRules({ quiet: true });
+  }
+
+  // 2. Jalankan Lexical & Technical Synonym Matching terlebih dahulu
+  const lexicalMatches = rankGuidelinesByRelevance(query, allRules, limit);
+
+  // Jika Qdrant aktif dan ada embedding model terkonfigurasi, coba kombinasikan dengan semantic vector
   if (config.dbType === 'qdrant') {
     try {
       const { client, collection } = await getQdrantClient();
@@ -499,24 +512,39 @@ export async function searchGuidelinesForDialog(
           ? (vectorParam as any).size
           : 3072;
 
-      // Generate query embedding vector
-      const vectors = await generateVectors([query], requiredDim);
-      const queryVector = vectors[0];
+      // Hanya panggil Qdrant vector search jika BUKAN local dummy vectorizer
+      if (config.embeddingModel && config.embeddingModel !== 'local') {
+        const vectors = await generateVectors([query], requiredDim);
+        const queryVector = vectors[0];
 
-      if (queryVector && queryVector.length > 0) {
-        const searchResults = await client.query(collection, {
-          query: queryVector,
-          limit,
-          with_payload: true,
-        });
+        if (queryVector && queryVector.length > 0) {
+          const searchResults = await client.query(collection, {
+            query: queryVector,
+            limit,
+            with_payload: true,
+          });
 
-        if (searchResults.points && searchResults.points.length > 0) {
-          return searchResults.points.map((p: any) => ({
-            id: String(p.id),
-            source: p.payload?.source || 'remote_vps',
-            title: p.payload?.title || 'Untitled',
-            content: p.payload?.content || '',
-          }));
+          if (searchResults.points && searchResults.points.length > 0) {
+            const vectorMatches = searchResults.points.map((p: any) => ({
+              id: String(p.id),
+              source: p.payload?.source || 'remote_vps',
+              title: p.payload?.title || 'Untitled',
+              content: p.payload?.content || '',
+            }));
+
+            // Gabungkan kedua hasil (dedup berdasarkan ID) dengan memprioritaskan lexical match yang relevan
+            const seen = new Set<string>();
+            const combined: DocChunk[] = [];
+
+            for (const r of [...lexicalMatches, ...vectorMatches]) {
+              if (!seen.has(r.id)) {
+                seen.add(r.id);
+                combined.push(r);
+              }
+            }
+
+            return combined.slice(0, limit);
+          }
         }
       }
     } catch (err: any) {
@@ -524,8 +552,7 @@ export async function searchGuidelinesForDialog(
     }
   }
 
-  // Fallback standar ke cache lokal
-  return searchRelevantGuidelines(query, limit);
+  return lexicalMatches.slice(0, limit);
 }
 
 /**

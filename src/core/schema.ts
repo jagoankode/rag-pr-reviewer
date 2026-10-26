@@ -25,7 +25,7 @@ export const PRReviewResultSchema = z.object({
   reviewSnapshot: z.object({ fingerprint: z.string(), engine: z.string(), rules: z.string(), inputs: z.string(), diff: z.string(), base: z.string(), head: z.string(), mergeBase: z.string(), mode: z.string(), scope: z.string() }).optional(),
   complete: z.boolean().optional(),
   ruleSnapshot: z.string().optional(),
-  coverage: z.array(z.object({ ruleId: z.string(), file: z.string(), status: z.enum(['PASS','FAIL','NOT_APPLICABLE','UNCERTAIN']), reason: z.string() })).optional(),
+  coverage: z.array(z.object({ ruleId: z.string(), file: z.string(), status: z.enum(['PASS','FAIL','NOT_APPLICABLE']), reason: z.string() })).optional(),
   status: z.enum(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']),
   summary: z.string().describe('High-level overview of the pull request changes'),
   violations: z.array(LineViolationSchema).describe('List of all detected code convention violations mapped to exact file and line number'),

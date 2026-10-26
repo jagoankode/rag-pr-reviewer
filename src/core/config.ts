@@ -83,7 +83,7 @@ const DEFAULT_CONFIG: AppConfig = {
   qdrantCollection: '',
 };
 
-export async function loadConfig(): Promise<AppConfig> {
+export async function loadConfig(includeProject = true): Promise<AppConfig> {
   const primaryFile = path.join(PRIMARY_CONFIG_DIR, 'config.json');
   const legacyFile = path.join(LEGACY_CONFIG_DIR, 'config.json');
 
@@ -99,17 +99,17 @@ export async function loadConfig(): Promise<AppConfig> {
     }
   }
 
-  let merged: AppConfig = { ...DEFAULT_CONFIG };
+  let merged: AppConfig = structuredClone(DEFAULT_CONFIG);
 
   try {
     const data = await fs.readFile(configFile, 'utf-8');
     const parsed = JSON.parse(data);
-    merged = { ...DEFAULT_CONFIG, ...parsed };
+    merged = { ...structuredClone(DEFAULT_CONFIG), ...parsed };
   } catch {
     const envApiKey = process.env.OPENAI_API_KEY || '';
     const envBaseUrl = process.env.OPENAI_BASE_URL || '';
     merged = {
-      ...DEFAULT_CONFIG,
+      ...structuredClone(DEFAULT_CONFIG),
       apiKey: envApiKey,
       baseUrl: envBaseUrl,
     };
@@ -121,7 +121,7 @@ export async function loadConfig(): Promise<AppConfig> {
     path.join(process.cwd(), '.lumiorc.json'),
     path.join(process.cwd(), '.lumio.json'),
   ];
-  for (const rcPath of localRcCandidates) {
+  for (const rcPath of includeProject ? localRcCandidates : []) {
     try {
       const rcData = await fs.readFile(rcPath, 'utf-8');
       const localOverrides = JSON.parse(rcData);
@@ -165,20 +165,15 @@ export function resolveProviderForModel(config: AppConfig, modelName?: string): 
   model: string;
 } {
   const targetModel = modelName || config.defaultModel || '';
-  let provId = (targetModel ? config.modelProviderMap?.[targetModel] : undefined) || config.provider || '9router';
-
-  // Heuristic jika belum terpetakan
-  if (targetModel && !config.modelProviderMap?.[targetModel]) {
-    if (targetModel.startsWith('ag/') || targetModel.startsWith('cx/')) {
-      provId = '9router';
-    } else if (targetModel.startsWith('gpt-') || targetModel.startsWith('o1') || targetModel.startsWith('o3')) {
-      provId = 'openai';
-    }
-  }
-
+  const mapped = targetModel ? config.modelProviderMap?.[targetModel] : undefined;
+  const provId = mapped || config.provider || '';
   const profile = config.providers?.[provId];
-  const apiKey = profile?.apiKey || config.apiKey || process.env.OPENAI_API_KEY || '';
-  const baseUrl = profile?.baseUrl || config.baseUrl || (provId === '9router' ? 'http://127.0.0.1:20129/v1' : '');
+  // Registered profiles are authoritative, including deliberately empty values.
+  // Environment is only a legacy/unregistered active-provider fallback; it must
+  // never override a mapped provider or a frozen registered configuration.
+  const legacy = !profile && !mapped && provId === config.provider;
+  const apiKey = profile ? profile.apiKey : legacy ? (config.apiKey || process.env.OPENAI_API_KEY || '') : '';
+  const baseUrl = profile ? profile.baseUrl : legacy ? (config.baseUrl || process.env.OPENAI_BASE_URL || '') : '';
 
   return {
     providerId: provId,
@@ -200,10 +195,11 @@ export async function saveConfig(config: AppConfig): Promise<void> {
 export async function getActiveAIProvider() {
   const config = await loadConfig();
 
-  const apiKey = process.env.OPENAI_API_KEY || config.apiKey;
-  const baseURL = process.env.OPENAI_BASE_URL || config.baseUrl || undefined;
+  const resolved = resolveProviderForModel(config);
+  const apiKey = resolved.apiKey;
+  const baseURL = resolved.baseUrl || undefined;
 
-  if (!apiKey && config.provider !== 'ollama') {
+  if (!apiKey && resolved.providerProfile?.providerType !== 'ollama' && !baseURL) {
     throw new Error(
       'API Key belum diset! Silakan konfigurasi via TUI (`lumio` -> "Configure AI Provider") atau set OPENAI_API_KEY di terminal.'
     );

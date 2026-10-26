@@ -258,7 +258,7 @@ function printReviewTerminalReport(result: PRReviewResult) {
     console.log(`Engine   : ${s.engine} | ${s.mode} | scope=${s.scope}`);
     console.log(`Rules    : ${s.rules}`);
   }
-  if (result.coverage) console.log(`Coverage : ${['PASS','FAIL','NOT_APPLICABLE','UNCERTAIN'].map(status => `${status}=${result.coverage!.filter(c => c.status === status).length}`).join(' | ')}\n`);
+  if (result.coverage) console.log(`Coverage : ${['PASS','FAIL','NOT_APPLICABLE'].map(status => `${status}=${result.coverage!.filter(c => c.status === status).length}`).join(' | ')}\n`);
   console.log(chalk.yellow('AI analysis is unverified advisory only; it never changes the core verdict.'));
 
   if (result.violations.length === 0) {

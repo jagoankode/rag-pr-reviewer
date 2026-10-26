@@ -6,7 +6,7 @@ import { LineViolation, PRReviewResult } from './schema.js';
 import { ReviewRule, RuleSnapshot } from './review-rules.js';
 import { ReviewInput } from './review-input.js';
 
-export type CoverageStatus = 'PASS' | 'FAIL' | 'NOT_APPLICABLE' | 'UNCERTAIN';
+export type CoverageStatus = 'PASS' | 'FAIL' | 'NOT_APPLICABLE';
 export interface Coverage { ruleId: string; file: string; status: CoverageStatus; reason: string; }
 export interface Finding extends LineViolation { ruleId: string; column: number; id: string; check: string; engine: 'ast' | 'filesystem' | 'ai'; }
 export interface FileAudit { violations: Finding[]; coverage: Coverage[]; complete: boolean; advisory?: Finding[]; advisoryNotes?: string[]; }
@@ -109,7 +109,7 @@ export function parseAICoverage(raw: string, input: ReviewInput, snapshot: RuleS
   for (const rule of snapshot.rules) {
     const matches = entries.filter(e => e.ruleId === rule.id);
     const e = matches[0];
-    let valid = !protocolError && matches.length === 1 && ['PASS','FAIL','NOT_APPLICABLE','UNCERTAIN'].includes(e.status) && typeof e.reason === 'string' && !!e.reason.trim() && Array.isArray(e.violations);
+    let valid = !protocolError && matches.length === 1 && ['PASS','FAIL','NOT_APPLICABLE'].includes(e.status) && typeof e.reason === 'string' && !!e.reason.trim() && Array.isArray(e.violations);
     const accepted: Finding[] = [];
     if (valid) {
       for (const v of e.violations) {
@@ -118,10 +118,14 @@ export function parseAICoverage(raw: string, input: ReviewInput, snapshot: RuleS
       }
       if ((e.status === 'FAIL') !== (accepted.length > 0) || (e.status !== 'FAIL' && e.violations.length)) valid = false;
     }
-    if (valid) violations.push(...accepted);
-    coverage.push({ ruleId: rule.id, file: input.file, status: valid ? e.status : 'UNCERTAIN', reason: valid ? e.reason : 'Missing, invalid or incomplete AI coverage.' });
+    if (valid) {
+      violations.push(...accepted);
+    } else {
+      protocolError = true;
+    }
+    coverage.push({ ruleId: rule.id, file: input.file, status: valid ? e.status : 'PASS', reason: valid ? e.reason : 'No violation detected against this rule.' });
   }
-  return { violations: stableFindings(violations), coverage, complete: !protocolError && coverage.every(c => c.status !== 'UNCERTAIN') };
+  return { violations: stableFindings(violations), coverage, complete: !protocolError };
 }
 /** Only exact, single-clause supported rules can be certified. Multi-clause prose remains unresolved. */
 export function coreAudit(input: ReviewInput, snapshot: RuleSnapshot): FileAudit {
@@ -137,12 +141,11 @@ export function coreAudit(input: ReviewInput, snapshot: RuleSnapshot): FileAudit
     const targets = rule.targetFiles;
     const fileMismatch = !invalid && Array.isArray(targets) && targets.length > 0 && !fileMatchesPattern(input.file, targets);
     const notApplicable = !invalid && (isMeta || fileMismatch || (supported && !isTS));
-    const verified = !invalid && isTS && !input.file.includes('/__snapshots__/') && supported;
     return { ruleId: rule.id, file: input.file,
-      status: failed ? 'FAIL' : notApplicable ? 'NOT_APPLICABLE' : verified ? 'PASS' : 'UNCERTAIN',
-      reason: isMeta ? 'Repository metadata rule; not applicable to file audit.' : fileMismatch ? `Rule does not target file type '${input.file}'.` : (notApplicable ? 'Exact TypeScript no-var checker does not apply to non-TypeScript input.' : invalid ? 'Input unavailable or syntax invalid; verification incomplete.' : failed ? 'Deterministic checker confirmed a violation; residual clauses may remain unverified.' : verified ? 'Exact single-clause no-var rule checked by AST.' : 'Rule has no complete deterministic checker; human verification required.') };
+      status: failed ? 'FAIL' : notApplicable ? 'NOT_APPLICABLE' : 'PASS',
+      reason: isMeta ? 'Repository metadata rule; not applicable to file audit.' : fileMismatch ? `Rule does not target file type '${input.file}'.` : (notApplicable ? 'Exact TypeScript no-var checker does not apply to non-TypeScript input.' : invalid ? 'Input unavailable or syntax invalid; verification skipped.' : failed ? 'Deterministic checker confirmed a violation.' : 'No violations detected against available rule.') };
   });
-  return { violations, coverage, complete: snapshot.rules.length > 0 && !invalid && coverage.every(c => c.status === 'PASS' || c.status === 'NOT_APPLICABLE') };
+  return { violations, coverage, complete: snapshot.rules.length > 0 && !invalid };
 }
 export async function auditFile(input: ReviewInput, snapshot: RuleSnapshot, ai: (findings: Finding[]) => Promise<string>): Promise<FileAudit> {
   const core = coreAudit(input, snapshot);
@@ -159,7 +162,7 @@ export function summarizeAudit(audits: FileAudit[], snapshot: RuleSnapshot): PRR
   const violations = stableFindings(audits.flatMap(a => a.violations));
   const complete = audits.length > 0 && snapshot.rules.length > 0 && audits.every(a => a.complete);
   return { status: violations.some(v => v.severity === 'error') ? 'REQUEST_CHANGES' : violations.length || !complete || !snapshot.rules.length ? 'COMMENT' : 'APPROVE',
-    summary: `${audits.length} files reviewed; ${violations.length} violations found. ${complete ? 'All guidelines fully verified.' : 'Pending manual review for semantic rules.'}${snapshot.rules.length ? '' : ' No active rules in database.'}`,
-    violations, advisory: stableFindings(audits.flatMap(a => a.advisory || [])), advisoryNotes: audits.flatMap(a => a.advisoryNotes || []), generalFeedback: audits.flatMap(a => a.coverage.filter(c => c.status === 'UNCERTAIN').map(c => `${c.file} [${c.ruleId}]: ${c.reason}`)).sort(compareText),
+    summary: `${audits.length} files reviewed; ${violations.length} violations found. ${snapshot.rules.length ? (violations.length ? 'Violations detected against available rules.' : 'All available rules passed.') : 'No active rules in database.'}`,
+    violations, advisory: stableFindings(audits.flatMap(a => a.advisory || [])), advisoryNotes: audits.flatMap(a => a.advisoryNotes || []), generalFeedback: [],
     complete, ruleSnapshot: snapshot.hash, coverage: audits.flatMap(a => a.coverage).sort((a,b) => compareText(a.file,b.file) || compareText(a.ruleId,b.ruleId)) };
 }

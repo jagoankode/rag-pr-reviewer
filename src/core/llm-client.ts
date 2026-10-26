@@ -10,8 +10,8 @@ export async function callLLM(prompt: string, modelOverride?: string, signal?: A
   const config = frozenConfig || await loadConfig();
   const resolved = resolveProviderForModel(config, modelOverride);
   
-  const apiKey = process.env.OPENAI_API_KEY || resolved.apiKey;
-  const rawBaseUrl = process.env.OPENAI_BASE_URL || resolved.baseUrl || 'https://api.openai.com/v1';
+  const apiKey = resolved.apiKey;
+  const rawBaseUrl = resolved.baseUrl || 'https://api.openai.com/v1';
   const baseUrl = rawBaseUrl.replace(/\/+$/, '');
   const model = resolved.model;
 

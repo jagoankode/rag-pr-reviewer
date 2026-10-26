@@ -1,3 +1,4 @@
+import { parseModelNames, registerProvider, assignModels, selectModel, removeModels, removeProvider, updateProviderState } from '../core/provider-state.js';
 import chalk from 'chalk';
 import boxen from 'boxen';
 import { select, input, confirm, password } from '../core/nav.js';
@@ -664,571 +665,117 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
   }
 }
 
+// Both menus use this draft-only helper. Escape at ANY stage discards the draft.
+async function promptProvider(config: AppConfig, existing?: ProviderProfile): Promise<ProviderProfile | undefined> {
+  let type = existing?.providerType;
+  if (!type) {
+    const choice = await select({ message: 'Pilih tipe provider yang ingin ditambahkan:', choices: [
+      { name: 'Custom OpenAI-Compatible', value: 'custom' },
+      ...['9router', 'openai', 'openrouter', 'ollama'].map(value => ({ name: value, value })),
+    ] });
+    if (choice === 'back') return;
+    type = choice as ProviderProfile['providerType'];
+  }
+  let id = existing?.id || type;
+  let name = existing?.name || type;
+  if (!existing && type === 'custom') {
+    const raw = await input({ message: 'Nama identifier Provider baru:', validate: v => {
+      const id = v.trim().toLowerCase().replace(/\s+/g, '-');
+      return !id || ['back', 'b', 'new_custom'].includes(id) ? 'Identifier tidak valid' : config.providers?.[id] ? 'Provider sudah terdaftar' : true;
+    } });
+    if (raw === 'back') return;
+    id = raw.trim().toLowerCase().replace(/\s+/g, '-'); name = raw.trim();
+  }
+  if (!existing && config.providers?.[id]) {
+    console.log(chalk.yellow('Provider sudah terdaftar. Gunakan Edit.'));
+    await waitBackPrompt(); return;
+  }
+  const defaults: Record<string, string> = { '9router': 'http://127.0.0.1:20129/v1', openai: '', openrouter: 'https://openrouter.ai/api/v1', ollama: 'http://localhost:11434/v1', custom: '' };
+  const baseUrl = await input({ message: 'Base URL Provider (kosong = OpenAI default):', default: existing?.baseUrl ?? defaults[type], validate: v => {
+    if (!v.trim()) return type === 'openai' ? true : 'Base URL wajib diisi';
+    try { return ['http:', 'https:'].includes(new URL(v).protocol) || 'Gunakan HTTP(S) URL'; } catch { return 'URL tidak valid'; }
+  } });
+  if (baseUrl === 'back') return;
+  const key = await password({ message: `API Key untuk ${id}${existing ? ' (kosong = pertahankan)' : ' (opsional)'}:`, mask: '*' });
+  if (key === 'back') return;
+  console.log(`Provider: ${id}\nBase URL: ${baseUrl || '(OpenAI default)'}\nAPI Key: ${key || existing?.apiKey ? '(tersimpan / masked)' : '(kosong)'}`);
+  const action = await select({ message: 'Simpan provider?', choices: [{ name: 'Simpan', value: 'save' }, { name: 'Batalkan tanpa simpan', value: 'cancel' }] });
+  if (action !== 'save') return;
+  return { id, name, providerType: type, baseUrl: baseUrl.trim(), apiKey: key.trim() || existing?.apiKey || '', models: existing?.models || [] };
+}
+
 async function quickSwitchModelUI(currentConfig: AppConfig) {
-  let activeModel = currentConfig.defaultModel || '';
-  let savedModels = currentConfig.savedModels ? [...currentConfig.savedModels] : [];
-
   while (true) {
-    const resolvedActive = resolveProviderForModel(currentConfig, activeModel);
+    currentConfig = await loadConfig(false);
+    const saved = currentConfig.savedModels || [];
     printHeader('Menu Utama > ⚡ Ganti Model Cepat');
-
-    console.log(chalk.cyan(`Provider Aktif : ${resolvedActive.providerId ? chalk.bold.yellow(resolvedActive.providerId) : chalk.gray('(Belum diset)')}`));
-    console.log(chalk.cyan(`Model Aktif    : ${activeModel ? chalk.bold.green(activeModel) : chalk.yellow('(Kosong / Belum Dipilih)')}`));
-    console.log(chalk.gray(`Base URL       : ${resolvedActive.baseUrl || '(Default)'}\n`));
-
-    const choices = [
-      ...savedModels.map((m) => {
-        const info = resolveProviderForModel(currentConfig, m);
-        const provBadge = chalk.gray(`[${info.providerId}]`);
-        return {
-          name: m === activeModel ? `🟢 ${m} ${provBadge} (Sedang Aktif)` : `⚪ ${m} ${provBadge}`,
-          value: `select:${m}`,
-        };
-      }),
+    console.log(`Model Aktif: ${currentConfig.defaultModel || '(Kosong)'}`);
+    const action = await select({ message: 'Pilih model yang ingin diaktifkan atau kelola daftar model:', choices: [
+      ...saved.map(m => ({ name: `${m} [${currentConfig.modelProviderMap?.[m] || 'belum terpetakan'}]${m === currentConfig.defaultModel ? ' (Sedang Aktif)' : ''}`, value: `select:${m}` })),
       { name: '➕ Tambah Model Baru ke Daftar', value: 'add' },
-      ...(savedModels.length > 0 ? [{ name: '🗑️  Hapus Model dari Daftar', value: 'delete' }] : []),
-      ...(activeModel ? [{ name: '⏸️  Kosongkan Model Aktif (Nonaktifkan)', value: 'clear_active' }] : []),
-      ...(savedModels.length > 0 ? [{ name: '🧹 Kosongkan Semua Model (Reset Daftar Model)', value: 'clear_all' }] : []),
-    ];
-
-    const action = await select({
-      message: 'Pilih model yang ingin diaktifkan atau kelola daftar model:',
-      choices,
-    });
-
-    if (action === 'back') {
-      return;
-    }
-
-    if (action === 'clear_active') {
-      activeModel = '';
-      const updatedConfig: AppConfig = {
-        ...currentConfig,
-        defaultModel: '',
-        savedModels,
-      };
-      await saveConfig(updatedConfig);
-      console.log(chalk.yellow(`\n✔ Model aktif berhasil dikosongkan.\n`));
+      ...(saved.length ? [{ name: 'Hapus Model dari Daftar', value: 'delete' }, { name: 'Kosongkan Model Aktif', value: 'clear_active' }, { name: 'Kosongkan Semua Model', value: 'clear_all' }] : []),
+    ] });
+    if (action === 'back') return;
+    try {
+      if (action === 'add') {
+        const raw = await input({ message: 'Masukkan nama model (pisahkan dengan koma untuk beberapa model):', validate: v => { try { parseModelNames(v); return true; } catch { return 'Nama model tidak valid'; } } });
+        if (raw === 'back') continue;
+        const models = parseModelNames(raw);
+        const provider = await select({ message: 'Model ini disediakan oleh provider mana?', choices: [
+          ...Object.values(currentConfig.providers || {}).map(p => ({ name: `${p.name} (${p.id})`, value: p.id })),
+          { name: '➕ Tambah Provider Baru...', value: 'new_custom' },
+        ] });
+        if (provider === 'back') continue;
+        const draft = provider === 'new_custom' ? await promptProvider(currentConfig) : undefined;
+        if (provider === 'new_custom' && !draft) continue;
+        currentConfig = await updateProviderState(latest => assignModels(draft ? registerProvider(latest, draft) : latest, models, draft?.id || provider));
+        console.log(chalk.green('✔ Model ditambahkan ke provider dan dijadikan model aktif!'));
+      } else if (action.startsWith('select:')) {
+        currentConfig = await updateProviderState(latest => selectModel(latest, action.slice(7)));
+        console.log(chalk.green('✔ Model aktif berhasil diganti'));
+        await waitBackPrompt(); return;
+      } else if (action === 'clear_active') {
+        await updateProviderState(latest => ({ ...latest, defaultModel: '' }));
+      } else if (action === 'clear_all') {
+        if (!await confirm({ message: 'Kosongkan semua model?', default: false })) continue;
+        await updateProviderState(latest => removeModels(latest, [...new Set([...(latest.savedModels || []), ...Object.keys(latest.modelProviderMap || {})]) ]));
+      } else if (action === 'delete') {
+        const model = await select({ message: 'Pilih model yang ingin dihapus:', choices: saved.map(value => ({ name: value, value })) });
+        if (model === 'back') continue;
+        await updateProviderState(latest => removeModels(latest, [model]));
+      }
       await waitBackPrompt();
-      continue;
-    }
-
-    if (action === 'clear_all') {
-      const confirmClear = await confirm({
-        message: 'Apakah Anda yakin ingin MENGOSONGKAN SEMUA model dari daftar?',
-        default: false,
-      });
-      if (confirmClear) {
-        activeModel = '';
-        savedModels = [];
-        const updatedConfig: AppConfig = {
-          ...currentConfig,
-          defaultModel: '',
-          savedModels: [],
-          modelProviderMap: {},
-        };
-        await saveConfig(updatedConfig);
-        console.log(chalk.green(`\n✔ Semua model berhasil dihapus. Daftar model sekarang kosong.\n`));
-        await waitBackPrompt();
-      }
-      continue;
-    }
-
-    if (action.startsWith('select:')) {
-      const chosen = action.replace('select:', '');
-      activeModel = chosen;
-      const targetResolved = resolveProviderForModel(currentConfig, activeModel);
-
-      const updatedConfig: AppConfig = {
-        ...currentConfig,
-        defaultModel: activeModel,
-        provider: targetResolved.providerId,
-        baseUrl: targetResolved.baseUrl,
-        apiKey: targetResolved.apiKey,
-        savedModels,
-      };
-      await saveConfig(updatedConfig);
-      console.log(chalk.green(`\n✔ Model aktif berhasil diganti ke: ${chalk.bold(activeModel)}`));
-      console.log(chalk.cyan(`✔ Provider aktif otomatis berganti ke: ${chalk.bold.yellow(targetResolved.providerId)}\n`));
-      await waitBackPrompt();
-      return;
-    }
-
-    if (action === 'add') {
-      const newModelName = await input({
-        message: 'Masukkan nama model AI chat/completion baru (contoh: ag/gemini-3.8-flash, gpt-4o, claude-sonnet-5):',
-        validate: (v) => {
-          const trimmed = v.trim();
-          if (trimmed.length === 0) return 'Nama model tidak boleh kosong';
-          if (trimmed.toLowerCase().includes('embedding')) {
-            return 'Peringatan: Model ini adalah embedding model. Di menu ini hanya untuk model AI Chat / Review LLM!';
-          }
-          return true;
-        },
-      });
-
-      if (newModelName && newModelName !== 'back') {
-        const trimmed = newModelName.trim();
-
-        const knownProviders = Object.keys(currentConfig.providers || { '9router': 1, 'openai': 1 });
-        const providerChoices = [
-          ...knownProviders.map((p) => {
-            const prof = currentConfig.providers?.[p];
-            return {
-              name: `📦 ${prof?.name || p} (${p})`,
-              value: p,
-            };
-          }),
-          { name: '➕ Hubungkan ke Custom Provider Baru...', value: 'new_custom' },
-        ];
-
-        let targetProvider = await select({
-          message: `Model "${trimmed}" ini disediakan oleh provider mana?`,
-          choices: providerChoices,
-        });
-
-        const providersMap = { ...(currentConfig.providers || {}) };
-
-        if (targetProvider === 'new_custom') {
-          const customName = await input({
-            message: 'Nama identifier custom provider (contoh: groq, vllm-local, together):',
-            validate: (v) => (v.trim().length > 0 ? true : 'Nama provider tidak boleh kosong'),
-          });
-          const customId = customName.trim().toLowerCase().replace(/\s+/g, '-');
-          const customBaseUrl = await input({
-            message: 'Base URL provider ini (contoh: https://api.groq.com/openai/v1):',
-            validate: (v) => (v.trim().length > 0 ? true : 'Base URL tidak boleh kosong'),
-          });
-          const customApiKey = await password({
-            message: `API Key untuk "${customId}":`,
-            mask: '*',
-          });
-
-          providersMap[customId] = {
-            id: customId,
-            name: customName.trim(),
-            providerType: 'custom',
-            apiKey: customApiKey && customApiKey !== 'back' ? customApiKey.trim() : '',
-            baseUrl: customBaseUrl.trim(),
-            models: [trimmed],
-          };
-          targetProvider = customId;
-        }
-
-        if (!savedModels.includes(trimmed)) {
-          savedModels.push(trimmed);
-        }
-        activeModel = trimmed;
-
-        const modelProviderMap = { ...(currentConfig.modelProviderMap || {}) };
-        modelProviderMap[trimmed] = targetProvider;
-
-        if (providersMap[targetProvider] && !providersMap[targetProvider].models.includes(trimmed)) {
-          providersMap[targetProvider].models.push(trimmed);
-        }
-
-        const resolved = resolveProviderForModel({
-          ...currentConfig,
-          providers: providersMap,
-          modelProviderMap,
-        }, activeModel);
-
-        const updatedConfig: AppConfig = {
-          ...currentConfig,
-          defaultModel: activeModel,
-          provider: resolved.providerId,
-          baseUrl: resolved.baseUrl,
-          apiKey: resolved.apiKey,
-          savedModels,
-          providers: providersMap,
-          modelProviderMap,
-        };
-        await saveConfig(updatedConfig);
-        console.log(chalk.green(`\n✔ Model ${chalk.bold(trimmed)} ditambahkan ke provider ${chalk.bold.yellow(targetProvider)} dan dijadikan model aktif!\n`));
-        await waitBackPrompt();
-      }
-    }
-
-    if (action === 'delete') {
-      const modelToDelete = await select({
-        message: 'Pilih model yang ingin dihapus dari daftar:',
-        choices: [
-          ...savedModels.map((m) => ({
-            name: m === activeModel ? `⚠️  ${m} (Sedang Aktif)` : m,
-            value: m,
-          })),
-          { name: '🔙 Batalkan', value: 'back' },
-        ],
-      });
-
-      if (modelToDelete !== 'back') {
-        savedModels = savedModels.filter((m) => m !== modelToDelete);
-        if (activeModel === modelToDelete) {
-          activeModel = savedModels.length > 0 ? savedModels[0] : '';
-        }
-        const modelProviderMap = { ...(currentConfig.modelProviderMap || {}) };
-        delete modelProviderMap[modelToDelete];
-
-        const targetResolved = resolveProviderForModel({
-          ...currentConfig,
-          modelProviderMap,
-        }, activeModel);
-
-        const updatedConfig: AppConfig = {
-          ...currentConfig,
-          defaultModel: activeModel,
-          provider: targetResolved.providerId,
-          baseUrl: targetResolved.baseUrl,
-          apiKey: targetResolved.apiKey,
-          savedModels,
-          modelProviderMap,
-        };
-        await saveConfig(updatedConfig);
-        console.log(chalk.green(`\n✔ Model ${chalk.bold(modelToDelete)} berhasil dihapus dari daftar.\n`));
-        await waitBackPrompt();
-      }
-    }
+    } catch (err: any) { console.log(chalk.red(err.message)); await waitBackPrompt(); }
   }
 }
 
 async function configureAIProviderUI(currentConfig: AppConfig) {
   while (true) {
+    currentConfig = await loadConfig(false);
     printHeader('Menu Utama > 🤖 Configure AI Provider');
-
-    const resolved = resolveProviderForModel(currentConfig);
-    console.log(chalk.cyan(`Provider Aktif : ${resolved.providerId ? chalk.bold.yellow(resolved.providerId) : chalk.gray('(Belum diset)')}`));
-    console.log(chalk.cyan(`Base URL       : ${chalk.white(resolved.baseUrl || '(Default)')}`));
-    console.log(chalk.cyan(`Model Aktif    : ${chalk.green(currentConfig.defaultModel || '(Kosong)')}\n`));
-
-    const existingProviders = Object.keys(currentConfig.providers || {});
-
-    const menuAction = await select({
-      message: 'Pilih aksi pengelolaan AI Provider:',
-      choices: [
-        { name: '✏️  Pilih / Edit Konfigurasi Provider Terdaftar', value: 'edit' },
-        { name: '➕ Tambah Provider Baru (Custom / Proxy / Official)', value: 'add' },
-        ...(existingProviders.length > 0 ? [{ name: '🗑️  Hapus Provider Terdaftar', value: 'delete' }] : []),
-      ],
-    });
-
-    if (menuAction === 'back') {
-      return;
-    }
-
-    if (menuAction === 'delete') {
-      const providerToDelete = await select({
-        message: 'Pilih provider yang ingin dihapus:',
-        choices: [
-          ...existingProviders.map((p) => {
-            const prof = currentConfig.providers?.[p];
-            const isCurrent = currentConfig.provider === p ? chalk.yellow(' (Sedang Aktif)') : '';
-            return {
-              name: `🗑️  ${prof?.name || p} [${p}]${isCurrent}`,
-              value: p,
-            };
-          }),
-          { name: '🔙 Batalkan', value: 'back' },
-        ],
-      });
-
-      if (providerToDelete !== 'back') {
-        const confirmDel = await confirm({
-          message: `Hapus provider "${providerToDelete}" beserta pemetaan modelnya?`,
-          default: false,
-        });
-
-        if (confirmDel) {
-          const providers = { ...(currentConfig.providers || {}) };
-          delete providers[providerToDelete];
-
-          const modelProviderMap = { ...(currentConfig.modelProviderMap || {}) };
-          for (const [model, prov] of Object.entries(modelProviderMap)) {
-            if (prov === providerToDelete) {
-              delete modelProviderMap[model];
-            }
-          }
-
-          const remainingProviders = Object.keys(providers);
-          const newActiveProvider = currentConfig.provider === providerToDelete
-            ? (remainingProviders.length > 0 ? remainingProviders[0] : '')
-            : (currentConfig.provider || '');
-
-          const targetResolved = resolveProviderForModel({
-            ...currentConfig,
-            providers,
-            modelProviderMap,
-            provider: newActiveProvider,
-          }, currentConfig.defaultModel);
-
-          currentConfig = {
-            ...currentConfig,
-            providers,
-            modelProviderMap,
-            provider: newActiveProvider,
-            baseUrl: targetResolved.baseUrl,
-            apiKey: targetResolved.apiKey,
-          };
-          await saveConfig(currentConfig);
-          console.log(chalk.green(`\n✔ Provider [${chalk.bold(providerToDelete)}] berhasil dihapus!\n`));
-          await waitBackPrompt();
-        }
-      }
-      continue;
-    }
-
-    let provider = '';
-    let baseUrl = '';
-    let defaultModel = currentConfig.defaultModel || 'ag/gemini-3.8-flash';
-    let apiKey = '';
-    let defaultReportDir = currentConfig.defaultReportDir || '.lumio-reviews';
-    let embeddingModel = currentConfig.embeddingModel || 'local';
-    let customProviderName = '';
-
-    if (menuAction === 'add') {
-      const providerTypeChoice = await select({
-        message: 'Pilih tipe provider yang ingin ditambahkan:',
-        choices: [
-          { name: '🛠️  Custom OpenAI-Compatible (Groq, Together, vLLM, DeepSeek, dsb.)', value: 'custom' },
-          { name: '🌐 9router Multi-Model Gateway', value: '9router' },
-          { name: '🟢 OpenAI Official', value: 'openai' },
-          { name: '🌌 OpenRouter API', value: 'openrouter' },
-          { name: '💻 Ollama Local Self-Hosted', value: 'ollama' },
-          { name: '🔙 Batalkan', value: 'back' },
-        ],
-      });
-
-      if (providerTypeChoice === 'back') continue;
-
-      if (providerTypeChoice === 'custom') {
-        const rawName = await input({
-          message: 'Nama identifier Provider baru (contoh: groq, vllm-local, together-ai):',
-          validate: (v) => (v.trim().length > 0 ? true : 'Nama provider tidak boleh kosong'),
-        });
-        const id = rawName.trim().toLowerCase().replace(/\s+/g, '-');
-        provider = id;
-        customProviderName = rawName.trim();
-
-        baseUrl = await input({
-          message: 'Base URL Provider:',
-          default: 'https://api.groq.com/openai/v1',
-          validate: (v) => (v.trim().length > 0 ? true : 'Base URL tidak boleh kosong'),
-        });
-
-        const enteredModel = await input({
-          message: 'Model AI untuk provider ini (pisahkan dengan koma jika lebih dari satu):',
-          default: 'llama-3.3-70b-versatile',
-          validate: (v) => (v.trim().length > 0 ? true : 'Model tidak boleh kosong'),
-        });
-        defaultModel = enteredModel.split(',')[0].trim();
-        embeddingModel = 'local';
-      } else if (providerTypeChoice === '9router') {
-        provider = '9router';
-        customProviderName = '9router Gateway';
-        baseUrl = await input({
-          message: '9router Base URL:',
-          default: 'http://127.0.0.1:20129/v1',
-        });
-        defaultModel = 'ag/gemini-3.8-flash';
-        embeddingModel = 'local';
-      } else if (providerTypeChoice === 'openai') {
-        provider = 'openai';
-        customProviderName = 'OpenAI Official';
-        baseUrl = '';
-        defaultModel = 'gpt-4o';
-        embeddingModel = 'text-embedding-3-small';
-      } else if (providerTypeChoice === 'openrouter') {
-        provider = 'openrouter';
-        customProviderName = 'OpenRouter API';
-        baseUrl = 'https://openrouter.ai/api/v1';
-        defaultModel = 'anthropic/claude-3.5-sonnet';
-        embeddingModel = 'local';
-      } else if (providerTypeChoice === 'ollama') {
-        provider = 'ollama';
-        customProviderName = 'Ollama Local';
-        baseUrl = await input({
-          message: 'Ollama Base URL:',
-          default: 'http://localhost:11434/v1',
-        });
-        defaultModel = 'qwen2.5-coder';
-        embeddingModel = 'local';
-      }
-    } else if (menuAction === 'edit') {
-      const providerListChoices = existingProviders.map((p) => {
-        const prof = currentConfig.providers?.[p];
-        const isCurrent = currentConfig.provider === p ? chalk.yellow(' [Sedang Aktif]') : '';
-        return {
-          name: `📦 ${prof?.name || p} (${p})${isCurrent}`,
-          value: p,
-        };
-      });
-
-      if (providerListChoices.length === 0) {
-        console.log(chalk.yellow('\n⚠️  Belum ada provider yang terdaftar. Silakan pilih "Tambah Provider Baru".\n'));
-        await waitBackPrompt();
-        continue;
-      }
-
-      providerListChoices.push({ name: '🔙 Batalkan', value: 'back' });
-
-      const targetP = await select({
-        message: 'Pilih provider yang ingin diedit/diaktifkan:',
-        choices: providerListChoices,
-      });
-
-      if (targetP === 'back') continue;
-
-      provider = targetP;
-      const prof = currentConfig.providers?.[targetP];
-      customProviderName = prof?.name || targetP;
-      baseUrl = prof?.baseUrl || (targetP === '9router' ? 'http://localhost:20128/v1' : '');
-      defaultModel = prof?.models?.[0] || currentConfig.defaultModel || 'gpt-4o';
-      apiKey = prof?.apiKey || (currentConfig.provider === targetP ? (currentConfig.apiKey || '') : '');
-
-      baseUrl = await input({
-        message: `Base URL untuk [${customProviderName}]:`,
-        default: baseUrl,
-      });
-
-      defaultModel = await input({
-        message: `Default Model untuk [${customProviderName}]:`,
-        default: defaultModel,
-      });
-
-      embeddingModel = await input({
-        message: 'Embedding Model (text-embedding-3-large, text-embedding-3-small, atau "local"):',
-        default: currentConfig.embeddingModel || 'local',
-      });
-    }
-
-    if (provider !== 'ollama') {
-      const existingKey = currentConfig.providers?.[provider]?.apiKey || (currentConfig.provider === provider ? (currentConfig.apiKey || '') : '');
-      const enteredKey = await password({
-        message: `Masukkan API Key untuk ${provider} (kosongkan jika tidak ingin mengubah):`,
-        mask: '*',
-      });
-      if (enteredKey && enteredKey !== 'back') {
-        apiKey = enteredKey;
+    const profiles = Object.values(currentConfig.providers || {});
+    console.log('Provider terdaftar: ' + (profiles.map(p => `${p.name} [${p.id}]`).join(', ') || '(Kosong)'));
+    console.log('Kelola model melalui Quick Switch Model.');
+    const action = await select({ message: 'Pilih aksi pengelolaan AI Provider:', choices: [
+      ...profiles.map(p => ({ name: `Edit ${p.name} [${p.id}]`, value: `edit:${p.id}` })),
+      { name: '➕ Tambah Provider Baru', value: 'add' },
+      ...(profiles.length ? [{ name: 'Hapus Provider Terdaftar', value: 'delete' }] : []),
+    ] });
+    if (action === 'back') return;
+    try {
+      if (action === 'delete') {
+        const id = await select({ message: 'Pilih provider yang ingin dihapus:', choices: profiles.map(p => ({ name: p.name, value: p.id })) });
+        if (id === 'back' || !await confirm({ message: 'Hapus provider beserta model yang terhubung?', default: false })) continue;
+        await updateProviderState(latest => removeProvider(latest, id));
       } else {
-        apiKey = existingKey;
+        const existing = action.startsWith('edit:') ? currentConfig.providers?.[action.slice(5)] : undefined;
+        const draft = await promptProvider(currentConfig, existing);
+        if (!draft) continue;
+        await updateProviderState(latest => registerProvider(latest, draft, !!existing));
       }
-    }
-
-    // REVIEW & EDIT CONFIRMATION LOOP
-    while (true) {
-      printHeader('Menu Utama > 🤖 Configure AI Provider > Konfirmasi');
-
-      const maskedKey = apiKey ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : chalk.gray('(Tidak ada / kosong)');
-
-      console.log(chalk.cyan('─── Ringkasan Konfigurasi AI (Cek Typo Sebelum Simpan) ───'));
-      console.log(`1. Provider        : ${chalk.bold.yellow(provider)}`);
-      console.log(`2. Base URL        : ${chalk.white(baseUrl || chalk.gray('(Default SDK)'))}`);
-      console.log(`3. Default Model   : ${chalk.bold.green(defaultModel)}`);
-      console.log(`4. Embedding Model : ${chalk.bold.magenta(embeddingModel || 'local')}`);
-      console.log(`5. API Key         : ${chalk.white(maskedKey)}`);
-      console.log(`6. Report Dir      : ${chalk.white(defaultReportDir)}`);
-      console.log(chalk.cyan('──────────────────────────────────────────────────────────\n'));
-
-      const reviewAction = await select({
-        message: 'Apakah konfigurasi di atas sudah sesuai?',
-        choices: [
-          { name: '✅ Ya, Simpan & Terapkan Konfigurasi', value: 'save' },
-          { name: '✏️  Edit Field Tertentu (Koreksi Typo)', value: 'edit_field' },
-          { name: '🔙 Batalkan (Tanpa Simpan)', value: 'cancel' },
-        ],
-      });
-
-      if (reviewAction === 'cancel' || reviewAction === 'back') {
-        console.log(chalk.gray('\nPerubahan konfigurasi AI dibatalkan.\n'));
-        await waitBackPrompt();
-        break;
-      }
-
-      if (reviewAction === 'save') {
-        const providers = { ...(currentConfig.providers || {}) };
-        const modelProviderMap = { ...(currentConfig.modelProviderMap || {}) };
-
-        providers[provider] = {
-          id: provider,
-          name: customProviderName || provider,
-          providerType: (['9router', 'openai', 'openrouter', 'ollama'].includes(provider) ? provider : 'custom') as any,
-          apiKey,
-          baseUrl,
-          models: Array.from(new Set([defaultModel, ...(providers[provider]?.models || [])])),
-        };
-
-        modelProviderMap[defaultModel] = provider;
-
-        const savedModels = currentConfig.savedModels && currentConfig.savedModels.length > 0
-          ? [...currentConfig.savedModels]
-          : [];
-        if (!savedModels.includes(defaultModel)) {
-          savedModels.push(defaultModel);
-        }
-
-        currentConfig = {
-          ...currentConfig,
-          provider,
-          apiKey,
-          baseUrl,
-          defaultModel,
-          embeddingModel,
-          defaultReportDir,
-          providers,
-          modelProviderMap,
-          savedModels,
-        };
-        await saveConfig(currentConfig);
-        console.log(chalk.green(`\n✔ Konfigurasi provider [${chalk.bold(provider)}] berhasil disimpan!\n`));
-        await waitBackPrompt();
-        break;
-      }
-
-      if (reviewAction === 'edit_field') {
-        const fieldToEdit = await select({
-          message: 'Pilih data yang ingin diperbaiki:',
-          choices: [
-            { name: `🌐 Base URL [${baseUrl}]`, value: 'baseUrl' },
-            { name: `⚡ Default Model [${defaultModel}]`, value: 'model' },
-            { name: `📐 Embedding Model [${embeddingModel}]`, value: 'embeddingModel' },
-            { name: `🔑 API Key`, value: 'apiKey' },
-            { name: `📁 Report Dir [${defaultReportDir}]`, value: 'reportDir' },
-            { name: '🔙 Selesai Edit (Kembali ke Ringkasan)', value: 'back' },
-          ],
-        });
-
-        if (fieldToEdit === 'baseUrl') {
-          const val = await input({
-            message: 'Koreksi Base URL:',
-            default: baseUrl,
-          });
-          if (val && val !== 'back') baseUrl = val.trim();
-        } else if (fieldToEdit === 'model') {
-          const val = await input({
-            message: 'Koreksi Default Model AI:',
-            default: defaultModel,
-          });
-          if (val && val !== 'back') defaultModel = val.trim();
-        } else if (fieldToEdit === 'embeddingModel') {
-          const val = await input({
-            message: 'Koreksi Embedding Model:',
-            default: embeddingModel,
-          });
-          if (val && val !== 'back') embeddingModel = val.trim();
-        } else if (fieldToEdit === 'apiKey') {
-          const val = await password({
-            message: 'Masukkan API Key baru:',
-            mask: '*',
-          });
-          if (val && val !== 'back') apiKey = val.trim();
-        } else if (fieldToEdit === 'reportDir') {
-          const val = await input({
-            message: 'Koreksi Report Dir:',
-            default: defaultReportDir,
-          });
-          if (val && val !== 'back') defaultReportDir = val.trim();
-        }
-      }
-    }
+      console.log(chalk.green('✔ Konfigurasi provider berhasil disimpan!'));
+      await waitBackPrompt();
+    } catch (err: any) { console.log(chalk.red(err.message)); await waitBackPrompt(); }
   }
 }
 
