@@ -391,24 +391,19 @@ export async function updateGuideline(
 
     const pointId = /^[0-9]+$/.test(id) ? Number(id) : id;
 
+    // Only the edited fields change; the rest of the payload (originalId, targetFiles, category, checks, ...) is kept.
     try {
-      await client.upsert(collection, {
+      await client.updateVectors(collection, { wait: true, points: [{ id: pointId, vector: vectors[0] }] });
+      await client.setPayload(collection, {
         wait: true,
-        points: [
-          {
-            id: pointId,
-            vector: vectors[0],
-            payload: {
-              originalId: id,
-              source,
-              title: newTitle,
-              content: newContent,
-              contentHash: getNormHash(newContent),
-              status: 'ACTIVE',
-              updated_at: new Date().toISOString(),
-            },
-          },
-        ],
+        points: [pointId],
+        payload: {
+          source,
+          title: newTitle,
+          content: newContent,
+          contentHash: getNormHash(newContent),
+          updated_at: new Date().toISOString(),
+        },
       });
     } catch (err: any) {
       throw wrapDbWriteError(err);
@@ -426,14 +421,19 @@ export async function updateGuideline(
   }
 
   const table = await db.openTable(TABLE_NAME);
-  // Hapus lalu masukkan yang baru dengan ID yang sama
-  await table.delete(`id = '${id}'`);
+  const filter = `id = '${id.replace(/'/g, "''")}'`;
+  const [row] = await table.query().where(filter).toArray();
+  const existing = row?.toJSON?.() ?? row;
+  if (!existing) return false;
 
   const texts = [`${newTitle}\n${newContent}`];
   const vectors = await generateVectors(texts);
 
+  // Hapus lalu masukkan yang baru dengan ID yang sama; kolom lain (mis. checks) dipertahankan.
+  await table.delete(filter);
   await table.add([
     {
+      ...existing,
       id,
       source,
       title: newTitle,
@@ -444,6 +444,42 @@ export async function updateGuideline(
   ]);
 
   return true;
+}
+
+/**
+ * Stores a rule's machine-checkable part (`checks`, `checksComplete`) without touching its text, vector or other fields.
+ * `id` is the rule id used in review snapshots: a `doc:` originalId or the point/row id.
+ */
+export async function setRuleChecks(id: string, checks: unknown[], checksComplete: boolean): Promise<void> {
+  const config = await loadConfig();
+
+  if (config.dbType === 'qdrant') {
+    const { client, collection } = await getQdrantClient();
+    const target = id.startsWith('doc:')
+      ? { filter: { must: [{ key: 'originalId', match: { value: id } }] } }
+      : { points: [/^[0-9]+$/.test(id) ? Number(id) : id] };
+    try {
+      await client.setPayload(collection, { wait: true, ...target, payload: { checks, checksComplete, updated_at: new Date().toISOString() } });
+    } catch (err: any) {
+      throw wrapDbWriteError(err);
+    }
+    await syncGuidelinesRules({ force: true, quiet: true });
+    return;
+  }
+
+  // Local LanceDB Mode: checks are kept as a JSON string column.
+  const db = await getDb();
+  if (!(await db.tableNames()).includes(TABLE_NAME)) throw new Error('Tabel guidelines belum ada.');
+  const table = await db.openTable(TABLE_NAME);
+  const columns = (await table.schema()).fields.map(f => f.name);
+  const missing = [
+    ...(columns.includes('checks') ? [] : [{ name: 'checks', valueSql: "''" }]),
+    ...(columns.includes('checksComplete') ? [] : [{ name: 'checksComplete', valueSql: 'false' }]),
+  ];
+  if (missing.length) await table.addColumns(missing);
+  const where = `id = '${id.replace(/'/g, "''")}'`;
+  if (!(await table.countRows(where))) throw new Error(`Rule ${id} tidak ditemukan.`);
+  await table.update({ where, values: { checks: JSON.stringify(checks), checksComplete } });
 }
 
 export async function deleteGuideline(id: string): Promise<boolean> {

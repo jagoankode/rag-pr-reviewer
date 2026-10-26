@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { AppConfig } from './config.js';
 import { getDb } from './db.js';
+import { CheckSpec, parseChecks } from './checkers/spec.js';
 
 export interface ReviewRule {
   id: string;
@@ -12,19 +13,31 @@ export interface ReviewRule {
   targetFiles?: string[];
   triggers?: string[];
   category?: string;
+  /** Machine-checkable parts of the rule (generic primitives). Raw payload is validated by snapshotRules. */
+  checks?: CheckSpec[];
+  /** True when `checks` enforce the whole rule, so the AI does not review it again. */
+  checksComplete?: boolean;
+  /** Invalid `checks` entries, skipped and reported instead of guessed. */
+  checkErrors?: string[];
 }
 export interface RuleSnapshot { readonly rules: readonly Readonly<ReviewRule>[]; readonly hash: string; }
 export function snapshotRules(rows: ReviewRule[]): RuleSnapshot {
   const rules = rows.filter(r => r.source !== 'system-prompt' && (!r.status || r.status === 'ACTIVE'))
-    .map(r => ({
-      id: String(r.id),
-      source: r.source,
-      title: r.title,
-      content: r.content,
-      targetFiles: Array.isArray(r.targetFiles) ? [...r.targetFiles] : undefined,
-      triggers: Array.isArray(r.triggers) ? [...r.triggers] : undefined,
-      category: typeof r.category === 'string' ? r.category : undefined,
-    }))
+    .map(r => {
+      const { checks, errors } = parseChecks(r.checks);
+      return {
+        id: String(r.id),
+        source: r.source,
+        title: r.title,
+        content: r.content,
+        targetFiles: Array.isArray(r.targetFiles) ? [...r.targetFiles] : undefined,
+        triggers: Array.isArray(r.triggers) ? [...r.triggers] : undefined,
+        category: typeof r.category === 'string' ? r.category : undefined,
+        checks: checks.length ? checks : undefined,
+        checksComplete: checks.length && r.checksComplete === true ? true : undefined,
+        checkErrors: errors.length ? errors : undefined,
+      };
+    })
     .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   if (rules.some(r => !r.id || !r.title || !r.content) || new Set(rules.map(r => r.id)).size !== rules.length)
     throw new Error('Invalid or duplicate rule identity in snapshot');

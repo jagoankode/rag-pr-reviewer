@@ -29,6 +29,7 @@ export interface AppConfig {
   embeddingApiKey?: string;
   embeddingBaseUrl?: string;
   defaultReportDir?: string;
+  defaultBaseBranch?: string; // base branch untuk `lumio review --pr` (default: branch default remote, origin/HEAD)
   // Konfigurasi Database (Local LanceDB vs Remote Qdrant VPS)
   dbType: DatabaseType;
   qdrantUrl?: string;
@@ -45,36 +46,14 @@ export function getConfigDir(): string {
 
 const DEFAULT_CONFIG: AppConfig = {
   language: 'id',
-  provider: '9router',
+  // No provider or model out of the box: the user sets them up (and can clear them again) in the TUI.
+  provider: '',
   apiKey: '',
-  baseUrl: 'http://127.0.0.1:20129/v1',
-  defaultModel: 'ag/gemini-3.8-flash',
-  savedModels: ['ag/gemini-3.8-flash', 'ag/claude-sonnet-4-6', 'cx/gpt-6-astra'],
-  providers: {
-    '9router': {
-      id: '9router',
-      name: '9router Gateway',
-      providerType: '9router',
-      apiKey: '',
-      baseUrl: 'http://127.0.0.1:20129/v1',
-      models: ['ag/gemini-3.8-flash', 'ag/claude-sonnet-4-6', 'cx/gpt-6-astra'],
-    },
-    'openai': {
-      id: 'openai',
-      name: 'OpenAI Official',
-      providerType: 'openai',
-      apiKey: '',
-      baseUrl: '',
-      models: ['gpt-4o', 'gpt-4o-mini', 'o3-mini'],
-    },
-  },
-  modelProviderMap: {
-    'ag/gemini-3.8-flash': '9router',
-    'ag/claude-sonnet-4-6': '9router',
-    'cx/gpt-6-astra': '9router',
-    'gpt-4o': 'openai',
-    'gpt-4o-mini': 'openai',
-  },
+  baseUrl: '',
+  defaultModel: '',
+  savedModels: [],
+  providers: {},
+  modelProviderMap: {},
   embeddingModel: 'local',
   defaultReportDir: '.lumio-reviews',
   dbType: 'local',

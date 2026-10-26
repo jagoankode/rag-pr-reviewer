@@ -45,6 +45,7 @@ export function formatReportToMarkdown(
       ? '**REQUEST CHANGES**'
       : '**COMMENT**';
 
+  const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\n/g, ' ');
   let md = `# Lumio - Pull Request Review Report
 
 - **Date:** ${dateStr}
@@ -52,20 +53,52 @@ export function formatReportToMarkdown(
 - **Status:** ${statusLabel}
 - **Model:** \`${options.model || 'default'}\`
 
----
-
-## Executive Summary
+## Summary
 
 ${result.summary}
-
----
-
-## Line-by-Line Code Convention Violations (${result.violations.length})
 `;
 
+  if (result.repository?.length) {
+    md += `\n## Branch & Commit (${result.repository.length})\n\n| Severity | Subject | Comment | Suggestion Fix |\n| --- | --- | --- | --- |\n`;
+    for (const r of result.repository) md += `| ${r.severity} | \`${cell(r.subject)}\` | ${cell(r.comment)} | ${cell(r.suggestedFix || '-')} |\n`;
+  }
+
+  md += `\n## Line-by-Line Code Convention Violations (${result.violations.length})\n`;
+  if (result.violations.length === 0) {
+    md += `\n*No violations found.${result.complete === false ? ' Review is incomplete; see notes below.' : ''}*\n`;
+  } else {
+    const byFile = new Map<string, typeof result.violations>();
+    for (const v of result.violations) byFile.set(v.file, [...(byFile.get(v.file) || []), v]);
+    for (const [file, items] of byFile) {
+      md += `\n### \`${file}\`\n\n| Line | Severity | Rule | Comment | Suggestion Fix |\n| ---: | --- | --- | --- | --- |\n`;
+      for (const v of items) {
+        md += `| ${v.line} | ${v.severity}${v.engine === 'ai' ? ' (AI)' : ''} | ${cell(v.rule)} | ${cell(v.comment)} | ${cell(v.suggestedFix || '-')} |\n`;
+      }
+    }
+  }
+
+  if (result.coverage?.length) {
+    const perRule = new Map<string, { fail: number; pass: number; na: number }>();
+    for (const c of result.coverage) {
+      const entry = perRule.get(c.ruleId) || { fail: 0, pass: 0, na: 0 };
+      if (c.status === 'FAIL') entry.fail++; else if (c.status === 'PASS') entry.pass++; else entry.na++;
+      perRule.set(c.ruleId, entry);
+    }
+    const titles = new Map(result.violations.map(v => [v.ruleId, v.rule]));
+    md += '\n## Rule Coverage (files per status)\n\n| Rule | FAIL | PASS | N/A |\n| --- | ---: | ---: | ---: |\n';
+    for (const [ruleId, e] of perRule) md += `| ${cell(titles.get(ruleId || '') || ruleId)} | ${e.fail} | ${e.pass} | ${e.na} |\n`;
+  }
+  if (result.skippedFiles?.length) {
+    md += '\n## Skipped Files\n\n';
+    for (const s of result.skippedFiles) md += `- \`${s.file}\`: ${s.reason}\n`;
+  }
+  if (result.notes?.length) {
+    md += '\n## Notes\n\n';
+    for (const note of result.notes) md += `- ${note}\n`;
+  }
   if (result.reviewSnapshot) {
     const s = result.reviewSnapshot;
-    const metadata = `
+    md += `
 ## Reproducibility
 
 - **Review ID:** \`${s.fingerprint}\`
@@ -76,47 +109,7 @@ ${result.summary}
 - **Rules:** \`${s.rules}\`
 - **Input digest:** \`${s.inputs}\`
 - **Mode / scope:** ${s.mode} / ${s.scope}
-
 `;
-    md = md.replace('## Line-by-Line', metadata + '## Line-by-Line');
-  }
-  if (result.violations.length === 0) {
-    md += `\n*No confirmed violations. This is not a clean approval unless status is APPROVE and coverage is complete.*\n`;
-  } else {
-    result.violations.forEach((v, index) => {
-      const severity = v.severity.toUpperCase();
-
-      md += `
-### ${index + 1}. \`${v.file}\` (Line ${v.line})
-
-- **Severity:** [${severity}]
-- **Rule:** \`${v.rule}\`
-- **Rule ID / checker:** \`${v.ruleId || "legacy"} / ${v.check || "legacy"}\`
-- **Comment:** ${v.comment}
-`;
-      if (v.suggestedFix) {
-        md += `
-**Suggested Fix:**
-
-\`\`\`typescript
-${v.suggestedFix}
-\`\`\`
-`;
-      }
-      md += `\n---\n`;
-    });
-  }
-
-
-
-  if (result.coverage) {
-    md += '\n## Deterministic rule coverage\n\n';
-    for (const c of result.coverage) md += `- ${c.file} [${c.ruleId}]: **${c.status}** — ${c.reason}\n`;
-  }
-  if (result.advisory?.length || result.advisoryNotes?.length) {
-    md += '\n## Unverified AI advisory — may vary, never determines core verdict\n\n';
-    for (const v of result.advisory || []) md += `- ${v.file}:${v.line} [${v.ruleId}]: ${v.comment}\n`;
-    for (const note of result.advisoryNotes || []) md += `- ${note}\n`;
   }
   md += `\n\n*Audited by Lumio (https://github.com/jagoankode/rag-pr-reviewer)*\n`;
   return md;

@@ -19,9 +19,20 @@ export const FileReviewResultSchema = z.object({
   notes: z.array(z.string()).describe('Specific architecture or convention notes for this file'),
 });
 
+export const RepoFindingSchema = z.object({
+  ruleId: z.string(),
+  rule: z.string(),
+  check: z.enum(['branch-name', 'commit-message']),
+  severity: z.enum(['error', 'warning']),
+  subject: z.string(),
+  comment: z.string(),
+  suggestedFix: z.string().nullable(),
+});
+
 export const PRReviewResultSchema = z.object({
-  advisory: z.array(LineViolationSchema).optional(),
-  advisoryNotes: z.array(z.string()).optional(),
+  repository: z.array(RepoFindingSchema).optional(),
+  skippedFiles: z.array(z.object({ file: z.string(), reason: z.string() })).optional(),
+  notes: z.array(z.string()).optional(),
   reviewSnapshot: z.object({ fingerprint: z.string(), engine: z.string(), rules: z.string(), inputs: z.string(), diff: z.string(), base: z.string(), head: z.string(), mergeBase: z.string(), mode: z.string(), scope: z.string() }).optional(),
   complete: z.boolean().optional(),
   ruleSnapshot: z.string().optional(),

@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import { initNavigationGuard } from './core/nav.js';
 import { ingestCommand } from './commands/ingest.js';
 import { reviewCommand } from './commands/review.js';
+import { rulesCompileCommand } from './commands/rules.js';
 import { learnFeatureCommand } from './commands/learn.js';
 import { runInteractiveTUI } from './commands/tui.js';
 import { getAppVersion } from './core/version.js';
@@ -76,32 +77,71 @@ program
     await ingestCommand(pathArg);
   });
 
+const rules = program
+  .command('rules')
+  .description('Manage the machine-checkable part of the rules in the database');
+
+rules
+  .command('compile')
+  .description('Draft `checks` from rule text with AI, try them on code, and save them after approval (admin)')
+  .option('-r, --rule <ids...>', 'Rule ids or title fragments (default: every non-meta rule without checks)')
+  .option('--force', 'Also redraft rules that already have checks')
+  .option('-m, --model <model>', 'LLM model to use (default: the active model set in the TUI)')
+  .option('--lang <language>', 'Language for check messages: id | en (default: en, like AI review comments)')
+  .option('--try <path>', 'Try the drafts on the files in this folder before approval')
+  .option('-o, --out <file>', 'Write the drafts to a JSON file for review instead of saving')
+  .option('--from <file>', 'Save drafts from a reviewed JSON file (no AI call)')
+  .option('-y, --yes', 'Save without asking')
+  .action(async (options) => {
+    if (options.lang && !['id', 'en'].includes(options.lang)) {
+      console.error(chalk.red('--lang harus id atau en'));
+      process.exit(1);
+    }
+    try {
+      await rulesCompileCommand({ ...options, language: options.lang });
+    } catch (error: any) {
+      console.error(chalk.red(`✖ ${error.message}`));
+      process.exit(1);
+    }
+  });
+
 program
   .command('review')
-  .description('Review git changes with AI and pinpoint exact line violations')
+  .description('Review git changes against team rules and pinpoint exact line violations')
   .option('-s, --staged', 'Review only staged changes')
+  .option('--pr', 'Self-review before opening a PR: HEAD + uncommitted changes vs base branch (config defaultBaseBranch, else the remote default branch origin/HEAD)')
   .option('-b, --branch <branch>', 'Review diff against a specific git branch (legacy alias for --target)')
   .option('--source <branch>', 'Source / feature branch to review (e.g. feature-x or origin/feature-x)')
   .option('--target <branch>', 'Target / base branch to compare against (e.g. main or origin/main)')
   .option('--fetch', 'Fetch remote branches before comparing (git fetch --all)')
-  .option('-m, --model <model>', 'LLM model to use (default: config model or ag/gemini-3.8-flash)')
-  .option('-l, --limit <number>', 'Number of relevant guidelines to retrieve', (val) => parseInt(val, 10), 7)
+  .option('--scope <scope>', 'full = audit whole changed files, diff = only added lines', 'full')
+  .option('-m, --model <model>', 'LLM model to use (default: the active model set in the TUI)')
+  .option('--concurrency <number>', 'Files audited by AI in parallel', (val) => parseInt(val, 10), 4)
   .option('--no-save', 'Disable saving review report to markdown in .lumio-reviews/')
   .option('--output-dir <path>', 'Custom directory to save markdown reports (default: .lumio-reviews)')
   .option('--json', 'Output review result as raw JSON')
-  .option('--core-only', 'Run deterministic checkers without optional AI advisory')
+  .option('--core-only', 'Run deterministic rule checkers only (fast, no AI)')
+  .option('--fail-on <level>', 'Exit with code 1 when findings reach this level: error | warning | never', 'error')
   .option('--max-violations <number>', 'Batas maksimal temuan sebelum review berhenti & generate report', (val) => parseInt(val, 10))
   .action(async (options) => {
+    if (!['full', 'diff'].includes(options.scope)) {
+      console.error(chalk.red(`--scope harus 'full' atau 'diff', bukan '${options.scope}'.`));
+      process.exit(2);
+    }
     // Tier 1: Check App Version
-    await checkAndUpgradeApp();
+    await checkAndUpgradeApp(!!options.json, 2);
     // Tier 2: Real-time Check Guidelines Revision sebelum review berjalan
-    await syncGuidelinesRules({ quiet: false });
+    await syncGuidelinesRules({ quiet: !!options.json });
 
-    await reviewCommand({
+    const result = await reviewCommand({
       ...options,
       fetchRemote: options.fetch,
       saveReport: options.save !== false,
     });
+    // Non-zero exit lets the review gate a git hook or CI step.
+    if (!result) process.exitCode = 2;
+    else if (options.failOn === 'warning' && result.status !== 'APPROVE') process.exitCode = 1;
+    else if (options.failOn === 'error' && result.status === 'REQUEST_CHANGES') process.exitCode = 1;
   });
 
 program

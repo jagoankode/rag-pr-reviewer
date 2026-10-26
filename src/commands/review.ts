@@ -4,9 +4,10 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { isGitRepo, getGitDiff } from '../core/git.js';
 import { parseAnnotatedDiffFiles } from '../core/diff-parser.js';
-import { loadReviewRules, snapshotRules, ReviewRule } from '../core/review-rules.js';
-import { captureReviewInputs } from '../core/review-input.js';
-import { auditFile, coreAudit, summarizeAudit, FileAudit, fileMatchesPattern } from '../core/review-engine.js';
+import { loadReviewRules } from '../core/review-rules.js';
+import { captureReviewInputs, ReviewInput } from '../core/review-input.js';
+import { auditFile, coreAudit, summarizeAudit, FileAudit } from '../core/review-engine.js';
+import { readRepoContext, repoAudit } from '../core/checkers/git.js';
 import { buildHybridPrompt } from '../core/review-prompt.js';
 import { saveReviewReport } from '../core/history.js';
 import { loadConfig } from '../core/config.js';
@@ -30,7 +31,19 @@ export interface ReviewOptions {
   saveReport?: boolean;
   outputDir?: string;
   maxViolations?: number; // Batas maksimal temuan kumulatif sebelum berhenti & generate report
+  pr?: boolean;           // Self-review sebelum PR: HEAD + uncommitted dibandingkan dengan base branch
+  concurrency?: number;   // Jumlah file yang diaudit AI secara paralel
 }
+
+/** Base branch for `--pr` when config.defaultBaseBranch is unset: the remote's default branch (origin/HEAD). */
+export function remoteDefaultBranch(cwd = process.cwd()): string | undefined {
+  try {
+    return execFileSync('git', ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+const AI_TIMEOUT_MS = 180_000;
 
 export function extractReviewResult(rawText: string): FileReviewResult {
   const text = (rawText || '').trim();
@@ -97,10 +110,13 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
   }
 
   const abortController = createProcessAbortController();
-  const spinner = ora(chalk.blue('Mengambil git diff... (Tekan Ctrl+C untuk batalkan)')).start();
+  const log = (...args: unknown[]) => { if (!options.json) console.log(...args); };
+  const spinner = ora({ text: chalk.blue('Mengambil git diff... (Tekan Ctrl+C untuk batalkan)'), isSilent: !!options.json }).start();
 
   try {
-    const targetBranch = options.target || options.branch;
+    const config = await loadConfig();
+    const targetBranch = options.target || options.branch || (options.pr ? config.defaultBaseBranch || remoteDefaultBranch() : undefined);
+    if (options.pr && !targetBranch) throw new Error('Base branch tidak diketahui: set defaultBaseBranch di config, pakai --target, atau jalankan `git remote set-head origin --auto`.');
     const sourceBranch = options.source;
 
     if (targetBranch && sourceBranch) {
@@ -110,12 +126,15 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     }
 
     // Fetch before resolving refs, then use immutable SHAs for both diff and content.
-    if (options.fetchRemote) execFileSync('git', ['fetch', '--all', '--prune'], { stdio: 'pipe' });
+    if (options.fetchRemote || options.pr) {
+      try { execFileSync('git', ['fetch', '--all', '--prune'], { stdio: 'pipe' }); } catch { if (!options.pr) throw new Error('git fetch gagal'); }
+    }
     const refs = resolveReviewRefs({ ...options, source: sourceBranch, target: targetBranch });
     const rawDiff = await getGitDiff({
       staged: options.staged,
       branch: targetBranch,
-      targetBranch: targetBranch ? refs.base : undefined,
+      // Self-review compares the worktree with the merge base, so changes already on the base are not reviewed.
+      targetBranch: targetBranch ? (sourceBranch ? refs.base : refs.mergeBase) : undefined,
       sourceBranch: sourceBranch && targetBranch ? refs.head : undefined,
       fetchRemote: false,
     });
@@ -148,52 +167,28 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
       return;
     }
 
-    const config = await loadConfig();
-    const modelName = options.model || config.defaultModel || 'ag/gemini-3.8-flash';
-
-    const totalFiles = fileDiffs.length;
-    spinner.succeed(chalk.green(`Ditemukan ${totalFiles} file yang berubah. Memulai analisis per file...\n`));
-
+    const modelName = options.model || config.defaultModel || '';
+    if (!options.coreOnly && !modelName) throw new Error('Belum ada model AI aktif. Pilih provider & model via TUI (`lumio` → Model), atau pakai --model, atau jalankan dengan --core-only.');
+    spinner.text = chalk.cyan('Memuat rules dari database...');
     const rules = await loadReviewRules(config);
+    spinner.succeed(chalk.green(`Ditemukan ${fileDiffs.length} file berubah, ${rules.rules.length} rules aktif. Memulai audit...\n`));
+
     const inputs = captureReviewInputs(fileDiffs, { ...options, target: targetBranch ? refs.base : undefined, source: sourceBranch && targetBranch ? refs.head : undefined });
-    const audits: FileAudit[] = [];
     const maxViolations = typeof options.maxViolations === 'number' && options.maxViolations > 0 ? options.maxViolations : undefined;
-    let totalViolationsCount = 0;
-
-    for (const input of inputs) {
-      if (abortController.signal.aborted) return;
-      const fileSpinner = ora(`Auditing ${input.file}...`).start();
-
-      // Targeted RAG: kirim hanya rules yang applicable untuk file ini ke LLM
-      const targetedRules = snapshotRules(
-        rules.rules.filter(r => {
-          if (r.category === 'meta') return false;
-          if (r.targetFiles && r.targetFiles.length > 0 && !fileMatchesPattern(input.file, r.targetFiles)) return false;
-          return true;
-        }) as ReviewRule[]
-      );
-
-      const audit = options.coreOnly ? coreAudit(input, rules) : await auditFile(input, targetedRules.rules.length > 0 ? targetedRules : rules, findings => callLLM(
-        buildHybridPrompt(input, targetedRules.rules.length > 0 ? targetedRules : rules, findings), modelName, AbortSignal.any([abortController.signal, AbortSignal.timeout(30_000)]), config, { temperature: 0 }
-      ));
-      audits.push(audit);
-      totalViolationsCount += audit.violations.length;
-
-      if (audit.violations.length) {
-        fileSpinner.fail(`${input.file}: ${audit.violations.length} violations found`);
-      } else {
-        fileSpinner.succeed(`${input.file}: Passed (No violations)`);
-      }
-
-      if (maxViolations && totalViolationsCount >= maxViolations) {
-        if (!options.json) {
-          console.log(chalk.yellow(`\n⚠️  Batas maksimal temuan tercapai (${totalViolationsCount} >= ${maxViolations} violations). Menghentikan review & langsung membuat report...\n`));
-        }
-        break;
-      }
-    }
+    const audits = await auditInputs(inputs, {
+      concurrency: options.coreOnly ? inputs.length : Math.max(1, options.concurrency || 4),
+      maxViolations,
+      signal: abortController.signal,
+      quiet: !!options.json,
+      audit: input => options.coreOnly ? Promise.resolve(coreAudit(input, rules)) : auditFile(input, rules, (findings, aiRules) => callLLM(
+        buildHybridPrompt(input, aiRules, findings), modelName, AbortSignal.any([abortController.signal, AbortSignal.timeout(AI_TIMEOUT_MS)]), config, { temperature: 0 }
+      )),
+    });
     if (abortController.signal.aborted) return;
-    const reviewResult = summarizeAudit(audits, rules);
+
+    const repository = repoAudit(rules, readRepoContext(refs, sourceBranch));
+    const reviewResult = summarizeAudit(audits, rules, repository);
+    if (options.coreOnly) reviewResult.notes = ['Core-only: hanya checker deterministik; rule semantik tidak diperiksa AI.', ...(reviewResult.notes || [])];
     reviewResult.reviewSnapshot = snapshotReview(inputs, rules, rawDiff, refs, options.scope || 'full');
 
     if (options.json) {
@@ -201,7 +196,7 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
       return reviewResult;
     }
 
-    console.log('');
+    log('');
     printReviewTerminalReport(reviewResult);
 
     // Simpan report history markdown secara default
@@ -216,10 +211,10 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
           staged: options.staged,
           sourceBranch,
           targetBranch,
-          model: modelName,
+          model: options.coreOnly ? 'core-only' : modelName,
           outputDir: options.outputDir,
         });
-        console.log(chalk.gray(`💾 History report tersimpan di: ${chalk.underline.cyan(savedPath)}\n`));
+        log(chalk.gray(`💾 History report tersimpan di: ${chalk.underline.cyan(savedPath)}\n`));
       } catch (err: any) {
         logError('SaveReviewReport', err);
       }
@@ -240,6 +235,32 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
   }
 }
 
+/** Audits files with bounded parallelism; results keep input order. Stops scheduling once maxViolations is reached. */
+async function auditInputs(inputs: ReviewInput[], opts: { concurrency: number; maxViolations?: number; signal: AbortSignal; quiet: boolean; audit: (input: ReviewInput) => Promise<FileAudit> }): Promise<FileAudit[]> {
+  const results: (FileAudit | undefined)[] = new Array(inputs.length);
+  const spinner = ora({ text: `Auditing 0/${inputs.length} files...`, isSilent: opts.quiet }).start();
+  let next = 0, done = 0, total = 0, stopped = false;
+  const worker = async () => {
+    while (!stopped && !opts.signal.aborted && next < inputs.length) {
+      const index = next++;
+      const audit = await opts.audit(inputs[index]);
+      results[index] = audit;
+      done++;
+      total += audit.violations.length;
+      spinner.text = `Auditing ${done}/${inputs.length} files... (${total} temuan)`;
+      if (!opts.quiet && audit.violations.length) {
+        spinner.stopAndPersist({ symbol: audit.violations.some(v => v.severity === 'error') ? chalk.red('✖') : chalk.yellow('▲'), text: `${audit.file}: ${audit.violations.length} temuan` });
+        spinner.start();
+      }
+      if (opts.maxViolations && total >= opts.maxViolations) stopped = true;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(opts.concurrency, inputs.length) }, worker));
+  spinner.succeed(`${done}/${inputs.length} files diaudit (${total} temuan)`);
+  if (stopped && !opts.quiet) console.log(chalk.yellow(`\n⚠️  Batas maksimal temuan tercapai (${total} >= ${opts.maxViolations}). Review dihentikan lebih awal.\n`));
+  return results.filter((a): a is FileAudit => !!a);
+}
+
 function printReviewTerminalReport(result: PRReviewResult) {
   const statusColor =
     result.status === 'APPROVE'
@@ -248,48 +269,37 @@ function printReviewTerminalReport(result: PRReviewResult) {
       ? chalk.bold.red
       : chalk.bold.yellow;
 
-  console.log(chalk.bold.cyan('═════════════════════ PULL REQUEST REVIEW REPORT ═════════════════════'));
+  console.log(chalk.bold.cyan('═════════════════════ PULL REQUEST SELF-REVIEW ═════════════════════'));
   console.log(`Status  : ${statusColor(result.status)}`);
-  console.log(`Summary : ${result.summary}\n`);
-  if (result.reviewSnapshot) {
-    const s = result.reviewSnapshot;
-    console.log(`Review ID: ${s.fingerprint}`);
-    console.log(`Base     : ${s.base}\nHead     : ${s.head}\nMerge base: ${s.mergeBase}`);
-    console.log(`Engine   : ${s.engine} | ${s.mode} | scope=${s.scope}`);
-    console.log(`Rules    : ${s.rules}`);
+  console.log(`Summary : ${result.summary}`);
+  if (result.reviewSnapshot) console.log(chalk.gray(`Review  : ${result.reviewSnapshot.fingerprint.slice(0, 16)} | ${result.reviewSnapshot.mode} | scope=${result.reviewSnapshot.scope}`));
+  console.log('');
+
+  for (const r of result.repository || []) {
+    console.log(`${r.severity === 'error' ? chalk.bgRed.white.bold(' ERROR ') : chalk.bgYellow.black.bold(' WARN ')} ${chalk.bold('git')} ${chalk.gray(`[${r.rule}]`)}`);
+    console.log(`    ${chalk.whiteBright(r.comment)}`);
+    if (r.suggestedFix) console.log(`    ${chalk.green('Fix: ' + r.suggestedFix)}`);
   }
-  if (result.coverage) console.log(`Coverage : ${['PASS','FAIL','NOT_APPLICABLE'].map(status => `${status}=${result.coverage!.filter(c => c.status === status).length}`).join(' | ')}\n`);
-  console.log(chalk.yellow('AI analysis is unverified advisory only; it never changes the core verdict.'));
+  if (result.repository?.length) console.log('');
 
-  if (result.violations.length === 0) {
-    console.log((result.complete === false || result.status !== 'APPROVE' ? chalk.yellow : chalk.green)(result.status === 'APPROVE' ? '✔ No violations found with complete rule coverage.' : 'No confirmed violations; review does not provide a clean verdict.'));
-  } else {
-    console.log(chalk.bold.red(`🚨 Line-by-Line Violations & PR Comments (${result.violations.length}):\n`));
-
-    result.violations.forEach((v) => {
-      const tag =
-        v.severity === 'error'
-          ? chalk.bgRed.white.bold(' ERROR ')
-          : v.severity === 'warning'
-          ? chalk.bgYellow.black.bold(' WARN ')
-          : chalk.bgBlue.white.bold(' INFO ');
-
-      console.log(`${tag} ${chalk.bold.underline(v.file)} : ${chalk.bold.yellow(`line ${v.line}`)}`);
-      console.log(`    Rule   : ${chalk.gray(v.rule)}`);
-      console.log(`    Comment: ${chalk.whiteBright(v.comment)}`);
-      if (v.suggestedFix) {
-        console.log(`    Fix    : ${chalk.green(v.suggestedFix)}`);
-      }
-      console.log(chalk.gray('─'.repeat(70)));
-    });
+  const byFile = new Map<string, LineViolation[]>();
+  for (const v of result.violations) byFile.set(v.file, [...(byFile.get(v.file) || []), v]);
+  for (const [file, items] of byFile) {
+    const errors = items.filter(v => v.severity === 'error').length;
+    console.log(`${chalk.bold.underline(file)} ${chalk.gray(`(${errors} error, ${items.length - errors} warning)`)}`);
+    for (const v of items) {
+      const tag = v.severity === 'error' ? chalk.red('error  ') : chalk.yellow('warning');
+      const source = v.engine === 'ai' ? chalk.magenta(' [AI]') : '';
+      console.log(`  ${chalk.gray(`${v.line}:${v.column ?? 1}`.padEnd(8))} ${tag} ${v.comment}${source}`);
+      console.log(`  ${' '.repeat(8)} ${chalk.gray(`↳ ${v.rule}`)}${v.suggestedFix ? chalk.green(`  Fix: ${v.suggestedFix}`) : ''}`);
+    }
+    console.log('');
   }
 
-
-
-  if (result.advisory?.length) {
-    console.log(chalk.yellow('\nUnverified AI advisory (may vary between runs; not confirmed violations):'));
-    result.advisory.forEach(v => console.log(` • ${v.file}:${v.line} [${v.ruleId}] ${v.comment}`));
+  if (!result.violations.length && !result.repository?.length) {
+    console.log(result.status === 'APPROVE' ? chalk.green('✔ Tidak ada pelanggaran. Siap dibuat PR.') : chalk.yellow('Tidak ada pelanggaran terkonfirmasi, tetapi review belum lengkap (lihat catatan).'));
   }
-
-  console.log(chalk.bold.cyan('\n══════════════════════════════════════════════════════════════════════\n'));
+  if (result.skippedFiles?.length) console.log(chalk.gray(`Dilewati: ${result.skippedFiles.map(s => `${s.file} (${s.reason})`).join(', ')}`));
+  for (const note of result.notes || []) console.log(chalk.yellow(`⚠ ${note}`));
+  console.log(chalk.bold.cyan('\n═══════════════════════════════════════════════════════════════════\n'));
 }
