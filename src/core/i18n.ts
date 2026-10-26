@@ -1,5 +1,8 @@
 export type Language = 'id' | 'en';
 
+/** Language name as written in AI instructions. */
+export const LANGUAGE_NAME: Record<Language, string> = { id: 'Bahasa Indonesia', en: 'English' };
+
 export const translations = {
   id: {
     tagline: 'AI Code Review & Knowledge Engine',

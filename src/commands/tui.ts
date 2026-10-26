@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import boxen from 'boxen';
 import { select, input, confirm, password } from '../core/nav.js';
 import { ingestCommand, ingestDirectRuleCommand } from './ingest.js';
-import { reviewCommand } from './review.js';
+import { reviewCommand, remoteDefaultBranch } from './review.js';
 import { inspectGuidelinesCommand } from './guidelines.js';
 import { learnFeatureCommand } from './learn.js';
 import { runInteractiveKnowledgeDialog } from './dialog.js';
@@ -413,6 +413,10 @@ async function reviewWorkflowUI(config: AppConfig) {
     message: 'Pilih mode review git yang diinginkan:',
     choices: [
       {
+        name: `✅ Self-review sebelum PR (${currentBranch} + perubahan lokal ⟵ ${config.defaultBaseBranch || remoteDefaultBranch() || 'origin/HEAD'})`,
+        value: 'self_review',
+      },
+      {
         name: `🔀 PR Branch Review (Bandingkan 2 Branch: Source ⟵ Target)`,
         value: 'pr_branches',
       },
@@ -490,7 +494,7 @@ async function reviewWorkflowUI(config: AppConfig) {
   if (!selectedModel) {
     console.log(chalk.yellow('\n⚠️  Belum ada model AI yang dipilih/aktif!'));
     selectedModel = await input({
-      message: 'Masukkan nama model AI untuk review (contoh: ag/gemini-3.8-flash, gpt-4o):',
+      message: 'Masukkan nama model AI untuk review (nama model dari provider Anda, mis. gpt-4o):',
       validate: (v) => (v.trim().length > 0 ? true : 'Model tidak boleh kosong'),
     });
     selectedModel = selectedModel.trim();
@@ -508,6 +512,7 @@ async function reviewWorkflowUI(config: AppConfig) {
   console.log(chalk.gray(`\nℹ️  Model: ${chalk.cyan(selectedModel)} | Scope: ${chalk.cyan(reviewScope.toUpperCase())} | ${limitDesc} | Output: ${chalk.cyan(outputDir)}\n`));
   await reviewCommand({
     staged: diffType === 'staged',
+    pr: diffType === 'self_review',
     target: targetBranch,
     source: sourceBranch,
     scope: reviewScope,

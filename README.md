@@ -67,6 +67,12 @@ Menu dikelompokkan secara rapi dan modular:
 ### 2. Command Line Langsung (CLI Fast Mode)
 
 ```bash
+# Self-review sebelum membuat PR: commit di branch ini + perubahan lokal vs base branch (config defaultBaseBranch, atau branch default remote)
+lumio review --pr
+
+# Cepat & deterministik (tanpa AI), cocok untuk git hook
+lumio review --pr --core-only
+
 # Review perubahan uncommitted
 lumio review
 
@@ -84,6 +90,9 @@ lumio ingest ./docs/coding-standards.md
 
 # Buka riwayat review
 lumio history
+
+# Susun checks deterministik dari teks rule dengan AI (admin)
+lumio rules compile --try ./src --out drafts.json
 
 # Paksa sinkronisasi rules dari Qdrant VPS
 lumio sync
@@ -108,66 +117,84 @@ npm test
 
 ISC © [jagoankode](https://github.com/jagoankode)
 
-### Hybrid review engine
+### Cara kerja review
 
-`review` now reads all active, non-system rules once (paginated, read-only Qdrant or
-local LanceDB), rather than selecting top-5/top-3 matches. A failed rule read aborts
-the review; it never silently substitutes an empty rule set. Legacy rows without a
-status remain active. The report includes the rule snapshot hash, per-rule/file
-coverage and stable finding IDs (rule, path, line, column, check).
+Lumio adalah **buku contekan kosong**: kode tidak berisi konvensi tim mana pun. Standar review adalah
+**rule aktif di database** (collection Qdrant tim atau LanceDB lokal). Tim baru cukup memasukkan rule-nya.
+Lumio membaca semua rule aktif (paginated, read-only), lalu memeriksa setiap file yang berubah dalam dua lapis:
 
-The local hybrid prompt is in `src/core/review-prompt.ts`; it does not modify or
-seed database prompts. The existing legacy prompt editor remains available for
-other/legacy consumers, but its audit template does not override this protocol.
+1. **Checks deterministik (AST TypeScript).** Rule boleh membawa field payload `checks`: daftar primitif
+   generik yang dijalankan engine. Rule tanpa `checks` hanya dinilai AI. Semua yang spesifik tim (glob file,
+   nama hook, pola nama, tipe terlarang, pesan, severity) adalah data di rule, bukan kode.
 
-Deterministic checks are deliberately narrow, enabled by explicit rule content:
-TypeScript forbidden types, assertions, non-null assertions, empty object types,
-explicit function parameter/return annotations; class/type/interface PascalCase;
-`var` prohibition; documented required and conditional module scaffold files.
-Scaffold checks require canonical component/container anchors in immediate
-`src/modules/<Module>` folders. Both documented test extensions are accepted;
-optional files aren't required unless the documented condition applies. A list of
-scaffold examples is **not** treated as an exclusive filename allowlist. A
-`Record<string, unknown>` restriction alone does not prohibit standalone `unknown`.
+   ```json
+   {
+     "checks": [
+       { "type": "forbid-call", "names": ["use*"], "files": ["*.view.tsx"], "severity": "error",
+         "message": "Hook `{name}` tidak boleh dipanggil di view.", "fix": "Pindahkan ke store." },
+       { "type": "branch-name", "pattern": "^(feat|fix)/[A-Z]+-\\d+-[a-z0-9-]+$", "allow": ["develop", "release/*"],
+         "severity": "error", "message": "Nama branch `{name}` tidak sesuai format." }
+     ],
+     "checksComplete": false
+   }
+   ```
 
-All rules still receive structured AI coverage for residual/unsupported clauses:
-PASS, FAIL, NOT_APPLICABLE or UNCERTAIN. Missing/invalid/duplicate responses,
-invalid locations, parser failures and provider errors cannot yield a clean
-verdict. Full scope checks affected files in full; diff scope restricts findings
-to added lines (including line 1 for scaffold findings). Deleted/binary-only files
-continue to be excluded by the existing diff parser.
+   | Primitif | Parameter utama |
+   | --- | --- |
+   | `forbid-syntax` | `syntax`: `var`, `non-null-assertion`, `type-assertion`, `empty-object-type`, `index-signature`, `function-declaration`, `optional-parameter-before-required`, `inline-object-type-in-signature`, `jsx`, `jsx-and-number`, `jsx-nested-ternary`, `jsx-ternary-null`, `jsx-inline-handler-wrapper`, `runtime-logic`, `non-export-statement`, `misplaced-directive`, `non-async-server-export`, `fallback`, `or-fallback`, `magic-number`, `magic-string`, `block-comment`, `commented-out-code`, `todo-without-ticket`, `hook-name-without-hook-call` |
+   | `forbid-type` | `types` (teks tipe, mis. `any`, `Record<string, unknown>`) |
+   | `forbid-call` | `names` (glob nama callee, mis. `use*`, `window.fetch`), `argument` (regex argumen pertama) |
+   | `forbid-import` | `from` (glob module), `names` (glob nama import), `allowTypeOnly`, `allowOwnTest` |
+   | `forbid-directive` / `require-directive` | `directives` / `directive` + `ifCalls` |
+   | `naming` | `target` (`identifier`, `variable`, `boolean`, `type`, `schema`, `test-title`), `pattern`, `forbidden`, `forbiddenPattern` |
+   | `explicit-types` / `require-jsdoc` | `returns`, `parameters`, `callbacks` (`each`/`summary`/`ignore`), `tagFormat`, `ignoreInsideCalls` |
+   | `format` | `rule`: `eof-newline`, `semicolon`, `curly`, `blank-line-before` (+ `keywords`) |
+   | `require-files` | `anchors` (mis. `{name}.view.tsx`), `required` (`file`, `if`) |
+   | `branch-name` / `commit-message` | `pattern` (regex), `allow` (glob branch yang dikecualikan) |
 
-File content and sibling inventories are captured before AI calls, using the
-index for staged reviews and resolved source commit for two-branch reviews.
-Diff/content mismatches invalidate the input. Capture is not an atomic filesystem
-or database transaction: concurrent modifications should be avoided. The selected
-configuration is reused, temperature is set to zero, and all prompts use frozen
-rule/file inputs. Providers may still be nondeterministic or reject temperature;
-AI PASS is not a mathematical proof. Deterministic AST results are reproducible;
-semantic AI findings and coverage are **not guaranteed identical across runs**.
-No type checker/cross-file semantic analysis is used. JSDoc, contextual naming,
-nonstandard module layouts and complex typing policies remain AI-assessed.
+   Semua check menerima `files`/`exclude` (glob; default `targetFiles` rule), `severity` (`error`/`warning`),
+   `message` dan `fix` dengan placeholder `{name}` `{Name}` `{text}` `{value}` `{file}` `{count}` `{lines}`,
+   serta `messages`/`fixes`/`severities` per kasus untuk primitif yang melaporkan beberapa kasus. Entri yang tidak valid
+   dilewati dan dilaporkan di catatan review, tidak pernah ditebak. `checksComplete: true` berarti rule
+   sudah dicek penuh sehingga tidak dikirim lagi ke AI.
 
-### Stable review core (local presentation increment)
+   **Menyusun `checks` dengan AI (admin):** `lumio rules compile` membaca teks rule, meminta AI menyusun
+   `checks` dari primitif di atas, memvalidasinya dengan skema (satu kali retry bila ditolak), lalu menampilkan
+   hasilnya. Rule yang butuh penilaian dibiarkan kosong dan tetap dinilai AI. Tidak ada yang tersimpan tanpa
+   persetujuan admin.
 
-The confirmed finding list and core verdict are computed independently of AI responses.
-AI analysis is explicitly **unverified advisory** and may differ between runs; it cannot
-approve residual semantics or add confirmed violations. This is not a claim of 100%
-semantic correctness. Existing phrase-based AST checks cover only some clauses;
-only an exact standalone `Never use \`var\`.` / `Do not use \`var\`.` rule currently has
-complete deterministic PASS coverage. Other rules remain UNCERTAIN unless a violation
-is confirmed, and must be verified by a human. No active rules never gives approval.
+   ```bash
+   # Draf untuk semua rule non-meta yang belum punya checks, diuji pada kode di src/, disimpan ke file untuk ditinjau
+   lumio rules compile --try ./src --out drafts.json
+   # Draf rule tertentu (id atau potongan judul), pesan dalam Bahasa Indonesia, konfirmasi per rule sebelum disimpan
+   lumio rules compile -r "Naming" --lang id --try ./src
+   # Simpan draf yang sudah ditinjau/diedit (tanpa memanggil AI)
+   lumio rules compile --from drafts.json
+   ```
 
-Reports include base/head/merge-base SHAs, rule and input digests, engine revision,
-mode/scope, and a reproducibility fingerprint. Compare these before comparing findings.
-Use committed PR mode (`review --source <head> --target <base>`) on both machines;
-worktree/staged results depend on each machine's actual captured content. Deleted,
-binary and metadata-only changes are explicitly incomplete rather than silently skipped.
-Fingerprint is a comparison identifier, **not** an authenticity signature or a cache.
-AI credentials/provider/model are intentionally outside the deterministic-core fingerprint.
+   AI hanya melihat satu rule. Informasi dari rule lain (mis. daftar branch inti yang ada di rule terpisah)
+   ditambahkan admin saat meninjau draf.
 
-New ingestion retains short rules and gives chunks content-addressed IDs independent of
-checkout location and chunk ordering. Existing imported records are not migrated or
-removed: legacy duplicates and stale active rules require explicit cleanup/re-ingestion.
-Review uses all active rules (exhaustive retrieval); semantic top-K RAG optimization and
-an approved structured checker registry remain future work. No CI integration is included.
+2. **AI** memeriksa klausul semantik yang tidak bisa diputuskan parser, hanya untuk rule yang `targetFiles`-nya
+   cocok dengan file. Rule dengan `checksComplete: true` tidak dikirim ke AI. Temuan AI divalidasi (rule ID,
+   file, baris, scope diff) dan **ikut menentukan verdict**; temuan yang invalid dibuang.
+
+**Bahasa:** komentar AI selalu dalam bahasa Inggris. Pesan temuan deterministik berasal dari `checks` di
+database, jadi bahasanya ditentukan tim; `rules compile` menyusunnya dalam bahasa Inggris kecuali diberi `--lang id`.
+
+**Verdict:** ada `error` → `REQUEST_CHANGES`; hanya `warning` → `COMMENT`; tanpa temuan → `APPROVE`.
+Severity temuan deterministik berasal dari `checks`; AI memakai `error` untuk klausul MUST/never/forbidden/mandatory.
+Jika AI gagal/timeout pada sebuah file, temuan deterministik tetap dilaporkan dan review ditandai belum
+lengkap (tidak pernah `APPROVE`). File yang dihapus atau biner dilewati tanpa memblokir verdict.
+
+**Exit code** (`--fail-on error|warning|never`, default `error`): `1` bila verdict mencapai level tersebut,
+`2` bila review gagal dijalankan. Contoh git hook `.git/hooks/pre-push`:
+
+```bash
+#!/usr/bin/env bash
+lumio review --pr --core-only --no-save
+```
+
+Setiap laporan menyimpan base/head/merge-base SHA, digest rule & input, versi engine dan fingerprint,
+sehingga dua mesin bisa membandingkan hasil review untuk commit yang sama. Hasil checks deterministik
+selalu identik; hasil AI bisa berbeda antar run.

@@ -78,7 +78,13 @@ function compareSemver(vA: string, vB: string): number {
 /**
  * Tier 1: Check App Version & Auto-Upgrade if a newer version is released on GitHub
  */
-export async function checkAndUpgradeApp(silent: boolean = false): Promise<boolean> {
+/**
+ * @param silent skip the upgrade entirely, e.g. for `--json` output that must stay machine-readable
+ * @param exitCode exit code after a successful upgrade; review uses a non-zero code so a git hook never treats
+ *   an unreviewed run as passing
+ */
+export async function checkAndUpgradeApp(silent: boolean = false, exitCode: number = 0): Promise<boolean> {
+  if (silent) return false;
   // Hanya lakukan auto-upgrade jika dijalankan dari binary yang terpasang di ~/.lumio/app
   const appDir = path.join(getConfigDir(), 'app');
   const isInstalledBinary = process.argv[1]?.includes(appDir) || process.cwd() !== path.resolve(appDir, '../..');
@@ -108,7 +114,7 @@ export async function checkAndUpgradeApp(silent: boolean = false): Promise<boole
         });
         spinner.succeed(chalk.green(`Lumio berhasil di-upgrade ke v${remoteVersion}! ✨`));
         console.log(chalk.cyan(`\n💡 Silakan ketik ${chalk.bold.green('lumio')} kembali untuk mulai menggunakan versi terbaru.\n`));
-        process.exit(0);
+        process.exit(exitCode);
       } catch (err: any) {
         spinner.fail(chalk.yellow(`Gagal auto-upgrade: ${err.message}. Tetap melanjutkan dengan versi saat ini.`));
         return false;
@@ -172,14 +178,23 @@ export async function syncGuidelinesRules(options: { force?: boolean; quiet?: bo
     const { client } = await getQdrantClient();
 
     // 1. Ambil scroll ringan untuk mendapatkan seluruh rules dari Qdrant (KECUALI system-prompt)
-    const response = await client.scroll(collection, {
-      limit: 500,
-      with_payload: true,
-      with_vector: false, // TIDAK PERLU VECTOR -> Super cepat & hemat bandwidth!
-    });
+    // Paginasi penuh: scroll tunggal hanya mengembalikan satu halaman.
+    const allPoints: any[] = [];
+    let offset: string | number | undefined;
+    do {
+      const page = await client.scroll(collection, {
+        limit: 256,
+        offset,
+        with_payload: true,
+        with_vector: false, // TIDAK PERLU VECTOR -> Super cepat & hemat bandwidth!
+      });
+      allPoints.push(...(page.points || []));
+      const next = page.next_page_offset;
+      offset = typeof next === 'string' || typeof next === 'number' ? next : undefined;
+    } while (offset !== undefined);
 
     // Filter ketat: kecualikan system-prompt agar tidak tercampur sebagai aturan coding!
-    const points = (response.points || []).filter(
+    const points = allPoints.filter(
       (p: any) => p.payload?.source !== 'system-prompt'
     );
 

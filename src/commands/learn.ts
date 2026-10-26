@@ -75,7 +75,8 @@ export async function learnFeatureCommand(targetPath: string, modelOverride?: st
       .join('\n\n');
 
     const config = await loadConfig();
-    const modelName = modelOverride || config.defaultModel || 'ag/gemini-3.8-flash';
+    const modelName = modelOverride || config.defaultModel || '';
+    if (!modelName) throw new Error('Belum ada model AI aktif. Pilih provider & model via TUI (`lumio` → Model), atau pakai --model.');
 
     spinner.text = chalk.magenta(`Menganalisis pola arsitektur & aturan coding via AI (${modelName})... (Ctrl+C: Batal)`);
 

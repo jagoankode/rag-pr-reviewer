@@ -6,6 +6,7 @@ import {
   clearActiveAbortController,
 } from '../core/nav.js';
 import { loadConfig } from '../core/config.js';
+import { LANGUAGE_NAME } from '../core/i18n.js';
 import { callLLM } from '../core/llm-client.js';
 import { searchGuidelinesForDialog, listAllIndexedGuidelines } from '../core/db.js';
 import { getDynamicDialogPromptTemplate } from '../core/prompt-manager.js';
@@ -45,7 +46,11 @@ function formatForTerminal(text: string): string {
 
 export async function runInteractiveKnowledgeDialog(): Promise<void> {
   const config = await loadConfig();
-  const modelName = config.defaultModel || 'ag/gemini-3.8-flash';
+  const modelName = config.defaultModel || '';
+  if (!modelName) {
+    console.log(chalk.yellow('\n⚠️  Belum ada model AI aktif. Pilih provider & model dulu di menu Model.\n'));
+    return;
+  }
   const version = getAppVersion();
   const termW = Math.max(60, Math.min(90, process.stdout.columns || 80));
 
@@ -113,7 +118,8 @@ export async function runInteractiveKnowledgeDialog(): Promise<void> {
       const dialogTemplate = await getDynamicDialogPromptTemplate();
       const systemPrompt = dialogTemplate
         .replace('{{ALL_TITLES_SUMMARY}}', allTitlesSummary || '(Belum ada aturan yang tersimpan)')
-        .replace('{{KNOWLEDGE_CONTEXT}}', knowledgeContext);
+        .replace('{{KNOWLEDGE_CONTEXT}}', knowledgeContext)
+        .replace('{{LANGUAGE}}', LANGUAGE_NAME[config.language || 'id']);
 
       const historyPrompt = chatHistory.length > 0
         ? `Riwayat percakapan:\n${chatHistory.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n')}\n\nPertanyaan baru:\n${cleaned}`

@@ -36,7 +36,7 @@ const TECH_SYNONYMS: Record<string, string[]> = {
   kembalian: ['return', 'returns', 'early'],
 
   // Komponen & UI / Frontend
-  komponen: ['component', 'container', 'wrapper', 'view'],
+  komponen: ['component', 'view', 'ui'],
   tampilan: ['view', 'component', 'ui', 'rendering'],
   kait: ['hook', 'hooks', 'use'],
   cantolan: ['hook', 'hooks'],
@@ -49,7 +49,7 @@ const TECH_SYNONYMS: Record<string, string[]> = {
 
   // Struktur & Organisasi Kode
   berkas: ['file', 'files', 'structure', 'module'],
-  struktur: ['structure', 'scaffold', 'architecture', 'module'],
+  struktur: ['structure', 'folder', 'architecture', 'module'],
   modul: ['module', 'architecture'],
   penamaan: ['naming', 'name', 'convention'],
   nama: ['name', 'naming'],
