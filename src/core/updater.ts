@@ -84,7 +84,7 @@ export async function checkAndUpgradeApp(silent: boolean = false): Promise<boole
   const isInstalledBinary = process.argv[1]?.includes(appDir) || process.cwd() !== path.resolve(appDir, '../..');
 
   try {
-    const remotePkg = await fetchJson<{ version: string }>(GITHUB_RAW_PKG, 2500);
+    const remotePkg = await fetchJson<{ version: string }>(`${GITHUB_RAW_PKG}?t=${Date.now()}`, 2500);
     if (!remotePkg || !remotePkg.version) {
       return false;
     }
