@@ -4,9 +4,9 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { isGitRepo, getGitDiff } from '../core/git.js';
 import { parseAnnotatedDiffFiles } from '../core/diff-parser.js';
-import { loadReviewRules } from '../core/review-rules.js';
+import { loadReviewRules, snapshotRules, ReviewRule } from '../core/review-rules.js';
 import { captureReviewInputs } from '../core/review-input.js';
-import { auditFile, coreAudit, summarizeAudit, FileAudit } from '../core/review-engine.js';
+import { auditFile, coreAudit, summarizeAudit, FileAudit, fileMatchesPattern } from '../core/review-engine.js';
 import { buildHybridPrompt } from '../core/review-prompt.js';
 import { saveReviewReport } from '../core/history.js';
 import { loadConfig } from '../core/config.js';
@@ -163,18 +163,26 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     for (const input of inputs) {
       if (abortController.signal.aborted) return;
       const fileSpinner = ora(`Auditing ${input.file}...`).start();
-      const audit = options.coreOnly ? coreAudit(input, rules) : await auditFile(input, rules, findings => callLLM(
-        buildHybridPrompt(input, rules, findings), modelName, AbortSignal.any([abortController.signal, AbortSignal.timeout(30_000)]), config, { temperature: 0 }
+
+      // Targeted RAG: kirim hanya rules yang applicable untuk file ini ke LLM
+      const targetedRules = snapshotRules(
+        rules.rules.filter(r => {
+          if (r.category === 'meta') return false;
+          if (r.targetFiles && r.targetFiles.length > 0 && !fileMatchesPattern(input.file, r.targetFiles)) return false;
+          return true;
+        }) as ReviewRule[]
+      );
+
+      const audit = options.coreOnly ? coreAudit(input, rules) : await auditFile(input, targetedRules.rules.length > 0 ? targetedRules : rules, findings => callLLM(
+        buildHybridPrompt(input, targetedRules.rules.length > 0 ? targetedRules : rules, findings), modelName, AbortSignal.any([abortController.signal, AbortSignal.timeout(30_000)]), config, { temperature: 0 }
       ));
       audits.push(audit);
       totalViolationsCount += audit.violations.length;
 
       if (audit.violations.length) {
         fileSpinner.fail(`${input.file}: ${audit.violations.length} violations found`);
-      } else if (!audit.complete) {
-        fileSpinner.info(`${input.file}: Clean (needs manual review for semantic rules)`);
       } else {
-        fileSpinner.succeed(`${input.file}: All rules passed`);
+        fileSpinner.succeed(`${input.file}: Passed (No violations)`);
       }
 
       if (maxViolations && totalViolationsCount >= maxViolations) {

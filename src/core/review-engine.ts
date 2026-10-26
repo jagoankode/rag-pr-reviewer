@@ -13,6 +13,17 @@ export interface FileAudit { violations: Finding[]; coverage: Coverage[]; comple
 export const compareText = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
 const prose = (s: string) => s.replace(/```[\s\S]*?```/g, '').replace(/\*\*/g, '');
 
+export function fileMatchesPattern(file: string, patterns?: string[]): boolean {
+  if (!patterns || !patterns.length || patterns.includes('*')) return true;
+  return patterns.some(p => {
+    const clean = p.replace(/^\*\*\//, '').replace(/^\*\//, '');
+    if (clean.startsWith('*.')) {
+      return file.endsWith(clean.slice(1));
+    }
+    return file.includes(clean);
+  });
+}
+
 /** Explicit prohibitions only; examples and Record<string, unknown> do not ban unknown. */
 export function forbiddenKeywords(rule: Readonly<ReviewRule>): string[] {
   const text = prose(rule.content);
@@ -122,11 +133,14 @@ export function coreAudit(input: ReviewInput, snapshot: RuleSnapshot): FileAudit
     const failed = violations.some(v => v.ruleId === rule.id);
     // Deliberately narrow: never certify residual clauses from a phrase match.
     const supported = /^(?:Never use `var`|Do not use `var`)[.!]?$/.test(prose(rule.content).trim());
-    const notApplicable = !invalid && supported && !isTS;
+    const isMeta = rule.category === 'meta';
+    const targets = rule.targetFiles;
+    const fileMismatch = !invalid && Array.isArray(targets) && targets.length > 0 && !fileMatchesPattern(input.file, targets);
+    const notApplicable = !invalid && (isMeta || fileMismatch || (supported && !isTS));
     const verified = !invalid && isTS && !input.file.includes('/__snapshots__/') && supported;
     return { ruleId: rule.id, file: input.file,
       status: failed ? 'FAIL' : notApplicable ? 'NOT_APPLICABLE' : verified ? 'PASS' : 'UNCERTAIN',
-      reason: notApplicable ? 'Exact TypeScript no-var checker does not apply to non-TypeScript input.' : invalid ? 'Input unavailable or syntax invalid; verification incomplete.' : failed ? 'Deterministic checker confirmed a violation; residual clauses may remain unverified.' : verified ? 'Exact single-clause no-var rule checked by AST.' : 'Rule has no complete deterministic checker; human verification required.' };
+      reason: isMeta ? 'Repository metadata rule; not applicable to file audit.' : fileMismatch ? `Rule does not target file type '${input.file}'.` : (notApplicable ? 'Exact TypeScript no-var checker does not apply to non-TypeScript input.' : invalid ? 'Input unavailable or syntax invalid; verification incomplete.' : failed ? 'Deterministic checker confirmed a violation; residual clauses may remain unverified.' : verified ? 'Exact single-clause no-var rule checked by AST.' : 'Rule has no complete deterministic checker; human verification required.') };
   });
   return { violations, coverage, complete: snapshot.rules.length > 0 && !invalid && coverage.every(c => c.status === 'PASS' || c.status === 'NOT_APPLICABLE') };
 }

@@ -3,11 +3,28 @@ import { QdrantClient } from '@qdrant/js-client-rest';
 import { AppConfig } from './config.js';
 import { getDb } from './db.js';
 
-export interface ReviewRule { id: string; source: string; title: string; content: string; status?: string; }
+export interface ReviewRule {
+  id: string;
+  source: string;
+  title: string;
+  content: string;
+  status?: string;
+  targetFiles?: string[];
+  triggers?: string[];
+  category?: string;
+}
 export interface RuleSnapshot { readonly rules: readonly Readonly<ReviewRule>[]; readonly hash: string; }
 export function snapshotRules(rows: ReviewRule[]): RuleSnapshot {
   const rules = rows.filter(r => r.source !== 'system-prompt' && (!r.status || r.status === 'ACTIVE'))
-    .map(r => ({ id: String(r.id), source: r.source, title: r.title, content: r.content }))
+    .map(r => ({
+      id: String(r.id),
+      source: r.source,
+      title: r.title,
+      content: r.content,
+      targetFiles: Array.isArray(r.targetFiles) ? [...r.targetFiles] : undefined,
+      triggers: Array.isArray(r.triggers) ? [...r.triggers] : undefined,
+      category: typeof r.category === 'string' ? r.category : undefined,
+    }))
     .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   if (rules.some(r => !r.id || !r.title || !r.content) || new Set(rules.map(r => r.id)).size !== rules.length)
     throw new Error('Invalid or duplicate rule identity in snapshot');
