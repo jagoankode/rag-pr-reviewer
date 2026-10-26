@@ -109,7 +109,6 @@ program
   .command('review')
   .description('Review git changes against team rules and pinpoint exact line violations')
   .option('-s, --staged', 'Review only staged changes')
-  .option('--pr', 'Self-review before opening a PR: HEAD + uncommitted changes vs base branch (config defaultBaseBranch, else the remote default branch origin/HEAD)')
   .option('-b, --branch <branch>', 'Review diff against a specific git branch (legacy alias for --target)')
   .option('--source <branch>', 'Source / feature branch to review (e.g. feature-x or origin/feature-x)')
   .option('--target <branch>', 'Target / base branch to compare against (e.g. main or origin/main)')

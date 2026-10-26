@@ -67,11 +67,8 @@ Menu dikelompokkan secara rapi dan modular:
 ### 2. Command Line Langsung (CLI Fast Mode)
 
 ```bash
-# Self-review sebelum membuat PR: commit di branch ini + perubahan lokal vs base branch (config defaultBaseBranch, atau branch default remote)
-lumio review --pr
-
 # Cepat & deterministik (tanpa AI), cocok untuk git hook
-lumio review --pr --core-only
+lumio review --staged --core-only
 
 # Review perubahan uncommitted
 lumio review
@@ -188,11 +185,11 @@ Jika AI gagal/timeout pada sebuah file, temuan deterministik tetap dilaporkan da
 lengkap (tidak pernah `APPROVE`). File yang dihapus atau biner dilewati tanpa memblokir verdict.
 
 **Exit code** (`--fail-on error|warning|never`, default `error`): `1` bila verdict mencapai level tersebut,
-`2` bila review gagal dijalankan. Contoh git hook `.git/hooks/pre-push`:
+`2` bila review gagal dijalankan. Contoh git hook `.git/hooks/pre-commit`:
 
 ```bash
 #!/usr/bin/env bash
-lumio review --pr --core-only --no-save
+lumio review --staged --core-only --no-save
 ```
 
 Setiap laporan menyimpan base/head/merge-base SHA, digest rule & input, versi engine dan fingerprint,

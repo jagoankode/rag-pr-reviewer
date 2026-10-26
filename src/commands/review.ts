@@ -31,18 +31,9 @@ export interface ReviewOptions {
   saveReport?: boolean;
   outputDir?: string;
   maxViolations?: number; // Batas maksimal temuan kumulatif sebelum berhenti & generate report
-  pr?: boolean;           // Self-review sebelum PR: HEAD + uncommitted dibandingkan dengan base branch
   concurrency?: number;   // Jumlah file yang diaudit AI secara paralel
 }
 
-/** Base branch for `--pr` when config.defaultBaseBranch is unset: the remote's default branch (origin/HEAD). */
-export function remoteDefaultBranch(cwd = process.cwd()): string | undefined {
-  try {
-    return execFileSync('git', ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || undefined;
-  } catch {
-    return undefined;
-  }
-}
 const AI_TIMEOUT_MS = 180_000;
 
 export function extractReviewResult(rawText: string): FileReviewResult {
@@ -115,8 +106,7 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
 
   try {
     const config = await loadConfig();
-    const targetBranch = options.target || options.branch || (options.pr ? config.defaultBaseBranch || remoteDefaultBranch() : undefined);
-    if (options.pr && !targetBranch) throw new Error('Base branch tidak diketahui: set defaultBaseBranch di config, pakai --target, atau jalankan `git remote set-head origin --auto`.');
+    const targetBranch = options.target || options.branch;
     const sourceBranch = options.source;
 
     if (targetBranch && sourceBranch) {
@@ -126,9 +116,7 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     }
 
     // Fetch before resolving refs, then use immutable SHAs for both diff and content.
-    if (options.fetchRemote || options.pr) {
-      try { execFileSync('git', ['fetch', '--all', '--prune'], { stdio: 'pipe' }); } catch { if (!options.pr) throw new Error('git fetch gagal'); }
-    }
+    if (options.fetchRemote) execFileSync('git', ['fetch', '--all', '--prune'], { stdio: 'pipe' });
     const refs = resolveReviewRefs({ ...options, source: sourceBranch, target: targetBranch });
     const rawDiff = await getGitDiff({
       staged: options.staged,
@@ -269,7 +257,7 @@ function printReviewTerminalReport(result: PRReviewResult) {
       ? chalk.bold.red
       : chalk.bold.yellow;
 
-  console.log(chalk.bold.cyan('═════════════════════ PULL REQUEST SELF-REVIEW ═════════════════════'));
+  console.log(chalk.bold.cyan('═════════════════════ PULL REQUEST REVIEW REPORT ═════════════════════'));
   console.log(`Status  : ${statusColor(result.status)}`);
   console.log(`Summary : ${result.summary}`);
   if (result.reviewSnapshot) console.log(chalk.gray(`Review  : ${result.reviewSnapshot.fingerprint.slice(0, 16)} | ${result.reviewSnapshot.mode} | scope=${result.reviewSnapshot.scope}`));
@@ -297,7 +285,7 @@ function printReviewTerminalReport(result: PRReviewResult) {
   }
 
   if (!result.violations.length && !result.repository?.length) {
-    console.log(result.status === 'APPROVE' ? chalk.green('✔ Tidak ada pelanggaran. Siap dibuat PR.') : chalk.yellow('Tidak ada pelanggaran terkonfirmasi, tetapi review belum lengkap (lihat catatan).'));
+    console.log(result.status === 'APPROVE' ? chalk.green('✔ Tidak ada pelanggaran.') : chalk.yellow('Tidak ada pelanggaran terkonfirmasi, tetapi review belum lengkap (lihat catatan).'));
   }
   if (result.skippedFiles?.length) console.log(chalk.gray(`Dilewati: ${result.skippedFiles.map(s => `${s.file} (${s.reason})`).join(', ')}`));
   for (const note of result.notes || []) console.log(chalk.yellow(`⚠ ${note}`));

@@ -29,7 +29,6 @@ export interface AppConfig {
   embeddingApiKey?: string;
   embeddingBaseUrl?: string;
   defaultReportDir?: string;
-  defaultBaseBranch?: string; // base branch untuk `lumio review --pr` (default: branch default remote, origin/HEAD)
   // Konfigurasi Database (Local LanceDB vs Remote Qdrant VPS)
   dbType: DatabaseType;
   qdrantUrl?: string;
