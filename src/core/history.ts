@@ -107,12 +107,7 @@ ${v.suggestedFix}
     });
   }
 
-  if (result.generalFeedback && result.generalFeedback.length > 0) {
-    md += `\n## General Architecture Notes\n\n`;
-    result.generalFeedback.forEach((note) => {
-      md += `- ${note}\n`;
-    });
-  }
+
 
   if (result.coverage) {
     md += '\n## Deterministic rule coverage\n\n';

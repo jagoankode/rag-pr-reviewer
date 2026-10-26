@@ -1,6 +1,6 @@
 {
   "name": "lumio",
-  "version": "2.5.12",
+  "version": "2.5.13",
   "description": "✨ Lumio — AI-Powered PR Reviewer & Centralized Knowledge Engine",
   "main": "dist/index.js",
   "bin": {

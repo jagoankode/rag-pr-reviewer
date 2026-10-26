@@ -172,7 +172,7 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
       if (audit.violations.length) {
         fileSpinner.fail(`${input.file}: ${audit.violations.length} violations found`);
       } else if (!audit.complete) {
-        fileSpinner.info(`${input.file}: Clean (needs senior review for semantic rules)`);
+        fileSpinner.info(`${input.file}: Clean (needs manual review for semantic rules)`);
       } else {
         fileSpinner.succeed(`${input.file}: All rules passed`);
       }
@@ -276,12 +276,7 @@ function printReviewTerminalReport(result: PRReviewResult) {
     });
   }
 
-  if (result.generalFeedback && result.generalFeedback.length > 0) {
-    console.log(chalk.bold.cyan('\n📌 General Architecture Notes:'));
-    result.generalFeedback.forEach((note) => {
-      console.log(` • ${note}`);
-    });
-  }
+
 
   if (result.advisory?.length) {
     console.log(chalk.yellow('\nUnverified AI advisory (may vary between runs; not confirmed violations):'));
