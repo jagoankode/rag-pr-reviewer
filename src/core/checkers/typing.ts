@@ -3,7 +3,8 @@ import { CheckContext, Primitive, RawFinding } from './types.js';
 import { CheckOf } from './spec.js';
 import { FunctionLike, isFunctionLike, isInlineCallback, isInsideCall, functionName, namedOwner, walk } from './ast.js';
 
-const normalizeType = (text: string): string => text.replace(/\s+/g, ' ').replace(/\s*([<>,|&])\s*/g, '$1').replace(/,/g, ', ');
+// Spacing is not significant: `{}` = `{ }`, `{a: 1}` = `{ a: 1 }`, `Record<string,unknown>` = `Record<string, unknown>`.
+const normalizeType = (text: string): string => text.replace(/\s+/g, ' ').replace(/\s*([<>,|&{}()[\];:])\s*/g, '$1').replace(/[,;](?=[}\]])/g, '').replace(/[,;:]/g, '$& ');
 
 /** Types listed by the rule, compared on normalized text: `any`, `{}`, `Record<string, unknown>`. */
 export const forbidType: Primitive<CheckOf<'forbid-type'>> = ({ source, spec }) => {
@@ -70,7 +71,7 @@ function tagProblems(ctx: CheckContext, node: FunctionLike, doc: ts.JSDoc): RawF
   const startLine = source.getLineAndCharacterOfPosition(doc.getStart(source)).line;
   const optionalNames = new Set(node.parameters.filter(p => p.questionToken || p.initializer).map(p => p.name.getText(source)));
   doc.getText(source).split('\n').forEach((raw, offset) => {
-    const text = raw.replace(/^\s*\/?\*+\s?/, '');
+    const text = raw.replace(/^\s*\/?\*+\s*/, '');
     const at = (key: string, name: string | undefined) => out.push({ line: startLine + offset + 1, column: raw.indexOf('@') + 1 || 1, key, values: { name, text: text.trim().slice(0, 60) } });
     if (/^@return\b(?!s)/.test(text)) at('return-tag', functionName(node));
     if (/^@(param|returns)\s*\{\{/.test(text)) at('inline-type', functionName(node));

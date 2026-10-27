@@ -5,11 +5,13 @@ import { matchGlob } from './glob.js';
 
 const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
 
-/** `{name}.view.tsx` → regex capturing the unit name; `{a,b}` alternatives and `*` are allowed too. */
+/** Literal text with glob wildcards: `*` and `?` mean what they mean in matchGlob. */
+const wildcards = (part: string): string => part.replace(/[.+^$()|[\]\\{}]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]');
+
+/** `{name}.view.tsx` → regex capturing the unit name; `{a,b}` alternatives, `*` and `?` are allowed too. */
 function anchorRegExp(anchor: string): RegExp {
-  const re = anchor.split(/(\{name\}|\{[^{}]*\}|\*)/).map(part =>
-    part === '{name}' ? '(.+?)' : part === '*' ? '[^/]*' : /^\{.*\}$/.test(part) ? `(?:${part.slice(1, -1).split(',').map(p => p.replace(/[.+^$()|[\]\\?]/g, '\\$&')).join('|')})`
-      : part.replace(/[.+^$()|[\]\\?]/g, '\\$&')).join('');
+  const re = anchor.split(/(\{name\}|\{[^{}]*\})/).map(part =>
+    part === '{name}' ? '(.+?)' : /^\{.*\}$/.test(part) ? `(?:${part.slice(1, -1).split(',').map(wildcards).join('|')})` : wildcards(part)).join('');
   return new RegExp(`^${re}$`);
 }
 

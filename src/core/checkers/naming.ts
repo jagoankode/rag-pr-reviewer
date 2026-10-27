@@ -72,7 +72,7 @@ export const naming: Primitive<CheckOf<'naming'>> = ({ source, spec }) => {
   const out: RawFinding[] = [];
   for (const [node, name] of candidates(source, spec)) {
     const bad = (pattern && !pattern.test(name)) || spec.forbidden?.includes(name) || (forbiddenPattern && forbiddenPattern.test(name));
-    if (bad) out.push({ node, values: { name, Name: name[0].toUpperCase() + name.slice(1), text: name.slice(0, 60) } });
+    if (bad) out.push({ node, values: { name, Name: name.charAt(0).toUpperCase() + name.slice(1), text: name.slice(0, 60) } });
   }
   return out;
 };

@@ -1,4 +1,5 @@
 import { AppConfig, loadConfig, resolveProviderForModel } from './config.js';
+import { t } from './i18n.js';
 
 /**
  * Universal LLM caller yang kebal terhadap semua jenis proxy (9router, LiteLLM, dsb.)
@@ -16,7 +17,7 @@ export async function callLLM(prompt: string, modelOverride?: string, signal?: A
   const model = resolved.model;
 
   if (!model) {
-    throw new Error('Belum ada Model AI yang aktif atau dipilih. Silakan pilih model via TUI (`⚡ Ganti Model Cepat`).');
+    throw new Error(t('llmNoModel'));
   }
 
   const url = `${baseUrl}/chat/completions`;
@@ -51,14 +52,12 @@ export async function callLLM(prompt: string, modelOverride?: string, signal?: A
       throw netErr;
     }
     const causeMsg = netErr.cause?.message || netErr.cause?.code || netErr.message;
-    throw new Error(
-      `Gagal terhubung ke AI Endpoint (${url}): ${causeMsg}. Pastikan provider/daemon aktif atau ubah base URL di menu Setting.`
-    );
+    throw new Error(t('llmConnectFailed', { url, cause: causeMsg }));
   }
 
   if (!res.ok) {
     const errorText = await res.text();
-    throw new Error(`HTTP ${res.status} dari AI Provider: ${errorText}`);
+    throw new Error(t('llmHttpError', { status: res.status, body: errorText }));
   }
 
   const rawText = await res.text();

@@ -45,15 +45,18 @@ CRITICAL DIRECTIVES:
     title: 'System Codebase Mining Prompt Template',
     defaultTemplate: `You are a Principal Software Architect.
 Analyze the following source code files from a local feature/module folder ({{FOLDER_NAME}}).
-Trace the flow from entrypoint/route down to business logic and data layer.
+First identify what kind of code this is (for example UI components, hooks, API routes, services, data models, CLI commands
+or tests) and trace how its parts depend on each other.
 
 Reverse-engineer the implicit and explicit CODING CONVENTIONS, architecture patterns, and rules that this team follows.
+Extract only patterns the code shows consistently; do not add generic best practices.
 
-Extract rules across these categories:
-- Routing & Controller patterns (input validation, error handling, status codes)
-- Service / Business logic rules (DTO usage, typing, pure logic vs side effects)
-- Model & Database persistence conventions
-- Naming conventions (files, variables, interfaces)
+Cover whatever applies to this code, such as:
+- File and folder structure, and how responsibilities are split between files
+- Naming conventions (files, variables, functions, types)
+- Typing, data flow and state handling
+- Error handling and validation
+- Testing patterns
 
 Return ONLY valid JSON matching this schema:
 {
@@ -61,7 +64,7 @@ Return ONLY valid JSON matching this schema:
   "architectureSummary": "string",
   "rules": [
     {
-      "layer": "routing | service | model | general",
+      "layer": "area this rule applies to, as the codebase names it (e.g. component, hook, route, service, model, test, general)",
       "title": "string",
       "convention": "string",
       "exampleGood": "string or null"

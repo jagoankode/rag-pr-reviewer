@@ -1,12 +1,14 @@
 import crypto from 'crypto';
 
 /**
- * Normalisasi teks untuk perbandingan (lowercase, hapus whitespace berlebih dan tanda baca)
+ * Normalisasi teks untuk perbandingan (lowercase, whitespace berlebih).
+ * Tanda baca dipertahankan: `===` vs `==` adalah aturan yang berbeda.
+ * contentHash lama di DB memakai normalisasi yang menghapus tanda baca, jadi bandingkan selalu
+ * dengan hash yang dihitung ulang dari content, bukan contentHash tersimpan.
  */
 export function normalizeText(text: string): string {
   return text
     .toLowerCase()
-    .replace(/[^\w\s]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }

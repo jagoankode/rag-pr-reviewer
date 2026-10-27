@@ -26,11 +26,12 @@ function toRegExp(pattern: string): RegExp {
  */
 export function matchGlob(value: string, pattern: string, basename = true): boolean {
   if (pattern === '*' || pattern === '**') return true;
-  const target = pattern.includes('/') || !basename ? value : value.slice(value.lastIndexOf('/') + 1);
+  const name = value.slice(value.lastIndexOf('/') + 1);
+  // Decided per alternative: in `{*.ts,lib/**}`, `*.ts` matches the basename and `lib/**` the path.
   return expandBraces(pattern).some(p => {
     let re = cache.get(p);
     if (!re) cache.set(p, re = toRegExp(p));
-    return re.test(target);
+    return re.test(p.includes('/') || !basename ? value : name);
   });
 }
 

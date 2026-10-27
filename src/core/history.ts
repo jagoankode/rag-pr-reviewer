@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 import { PRReviewResult } from './schema.js';
+import { out } from './i18n.js';
 
 export interface SaveReportOptions {
   branch?: string;
@@ -29,13 +30,13 @@ export function formatReportToMarkdown(
 ): string {
   const dateStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
 
-  let targetLabel = 'Uncommitted working directory changes';
+  let targetLabel = out('mdTargetUncommitted');
   if (options.sourceBranch && options.targetBranch) {
-    targetLabel = `PR Diff: \`${options.targetBranch}\` <- \`${options.sourceBranch}\``;
+    targetLabel = `${out('mdTargetPr')}: \`${options.targetBranch}\` <- \`${options.sourceBranch}\``;
   } else if (options.branch) {
-    targetLabel = `Branch Diff: \`${options.branch}\``;
+    targetLabel = `${out('mdTargetBranch')}: \`${options.branch}\``;
   } else if (options.staged) {
-    targetLabel = 'Staged changes (`--staged`)';
+    targetLabel = out('mdTargetStaged');
   }
 
   const statusLabel =
@@ -46,33 +47,33 @@ export function formatReportToMarkdown(
       : '**COMMENT**';
 
   const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\n/g, ' ');
-  let md = `# Lumio - Pull Request Review Report
+  let md = `# ${out('mdTitle')}
 
-- **Date:** ${dateStr}
-- **Target:** ${targetLabel}
+- **${out('mdDate')}:** ${dateStr}
+- **${out('mdTarget')}:** ${targetLabel}
 - **Status:** ${statusLabel}
-- **Model:** \`${options.model || 'default'}\`
+- **${out('mdModel')}:** \`${options.model || 'default'}\`
 
-## Summary
+## ${out('mdSummary')}
 
 ${result.summary}
 `;
 
   if (result.repository?.length) {
-    md += `\n## Branch & Commit (${result.repository.length})\n\n| Severity | Subject | Comment | Suggestion Fix |\n| --- | --- | --- | --- |\n`;
+    md += `\n## ${out('mdRepo')} (${result.repository.length})\n\n| ${out('mdSeverity')} | ${out('mdSubject')} | ${out('mdComment')} | ${out('mdFix')} |\n| --- | --- | --- | --- |\n`;
     for (const r of result.repository) md += `| ${r.severity} | \`${cell(r.subject)}\` | ${cell(r.comment)} | ${cell(r.suggestedFix || '-')} |\n`;
   }
 
-  md += `\n## Line-by-Line Code Convention Violations (${result.violations.length})\n`;
+  md += `\n## ${out('mdViolations')} (${result.violations.length})\n`;
   if (result.violations.length === 0) {
-    md += `\n*No violations found.${result.complete === false ? ' Review is incomplete; see notes below.' : ''}*\n`;
+    md += `\n*${out('mdNoViolations')}${result.complete === false ? out('mdIncomplete') : ''}*\n`;
   } else {
     const byFile = new Map<string, typeof result.violations>();
     for (const v of result.violations) byFile.set(v.file, [...(byFile.get(v.file) || []), v]);
     for (const [file, items] of byFile) {
-      md += `\n### \`${file}\`\n\n| Line | Severity | Rule | Comment | Suggestion Fix |\n| ---: | --- | --- | --- | --- |\n`;
+      md += `\n### \`${file}\`\n\n| ${out('mdLine')} | ${out('mdSeverity')} | ${out('mdRule')} | ${out('mdComment')} | ${out('mdFix')} |\n| ---: | --- | --- | --- | --- |\n`;
       for (const v of items) {
-        md += `| ${v.line} | ${v.severity}${v.engine === 'ai' ? ' (AI)' : ''} | ${cell(v.rule)} | ${cell(v.comment)} | ${cell(v.suggestedFix || '-')} |\n`;
+        md += `| ${v.line} | ${v.severity} | ${cell(v.rule)} | ${cell(v.comment)} | ${cell(v.suggestedFix || '-')} |\n`;
       }
     }
   }
@@ -85,21 +86,21 @@ ${result.summary}
       perRule.set(c.ruleId, entry);
     }
     const titles = new Map(result.violations.map(v => [v.ruleId, v.rule]));
-    md += '\n## Rule Coverage (files per status)\n\n| Rule | FAIL | PASS | N/A |\n| --- | ---: | ---: | ---: |\n';
+    md += `\n## ${out('mdCoverage')}\n\n| ${out('mdRule')} | FAIL | PASS | N/A |\n| --- | ---: | ---: | ---: |\n`;
     for (const [ruleId, e] of perRule) md += `| ${cell(titles.get(ruleId || '') || ruleId)} | ${e.fail} | ${e.pass} | ${e.na} |\n`;
   }
   if (result.skippedFiles?.length) {
-    md += '\n## Skipped Files\n\n';
+    md += `\n## ${out('mdSkipped')}\n\n`;
     for (const s of result.skippedFiles) md += `- \`${s.file}\`: ${s.reason}\n`;
   }
   if (result.notes?.length) {
-    md += '\n## Notes\n\n';
+    md += `\n## ${out('mdNotes')}\n\n`;
     for (const note of result.notes) md += `- ${note}\n`;
   }
   if (result.reviewSnapshot) {
     const s = result.reviewSnapshot;
     md += `
-## Reproducibility
+## ${out('mdReproducibility')}
 
 - **Review ID:** \`${s.fingerprint}\`
 - **Base:** \`${s.base}\`
@@ -111,7 +112,7 @@ ${result.summary}
 - **Mode / scope:** ${s.mode} / ${s.scope}
 `;
   }
-  md += `\n\n*Audited by Lumio (https://github.com/jagoankode/rag-pr-reviewer)*\n`;
+  md += `\n\n*${out('mdFooter')} (https://github.com/jagoankode/rag-pr-reviewer)*\n`;
   return md;
 }
 

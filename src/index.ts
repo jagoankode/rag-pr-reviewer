@@ -13,6 +13,8 @@ import { learnFeatureCommand } from './commands/learn.js';
 import { runInteractiveTUI } from './commands/tui.js';
 import { getAppVersion } from './core/version.js';
 import { checkAndUpgradeApp, syncGuidelinesRules } from './core/updater.js';
+import { loadConfig } from './core/config.js';
+import { t } from './core/i18n.js';
 
 dotenv.config();
 initNavigationGuard();
@@ -22,10 +24,12 @@ const program = new Command();
 program
   .name('lumio')
   .description(chalk.cyan('✨ Lumio — AI-Powered PR Reviewer & Centralized Knowledge Engine'))
-  .version(getAppVersion(), '-v, --version', 'Tampilkan versi Lumio yang terinstall')
+  .version(getAppVersion(), '-v, --version', 'Show the installed Lumio version')
+  // Messages follow config.language, which loadConfig() applies.
+  .hook('preAction', async () => { await loadConfig(); })
   .action(async () => {
     // Tier 1: Check App Upgrade saat lumio dipanggil
-    await checkAndUpgradeApp();
+    await checkAndUpgradeApp(false, 0, true);
     // Warm-up & sync rules cache di background
     syncGuidelinesRules({ quiet: true }).catch(() => {});
     await runInteractiveTUI();
@@ -35,7 +39,7 @@ program
   .command('ui')
   .description('Launch the interactive Terminal User Interface (TUI)')
   .action(async () => {
-    await checkAndUpgradeApp();
+    await checkAndUpgradeApp(false, 0, true);
     syncGuidelinesRules({ quiet: true }).catch(() => {});
     await runInteractiveTUI();
   });
@@ -46,16 +50,20 @@ program
   .action(async () => {
     console.log(chalk.cyan('🔍 Checking guidelines revision from server...'));
     const rules = await syncGuidelinesRules({ force: true, quiet: false });
-    console.log(chalk.green(`✔ Sync selesai! Total ${rules.length} aturan aktif di cache lokal.`));
+    console.log(chalk.green(t('syncDone', { count: rules.length })));
   });
 
 program
   .command('upgrade')
   .description('Check and upgrade Lumio app to latest release')
   .action(async () => {
-    const upgraded = await checkAndUpgradeApp(false);
-    if (!upgraded) {
-      console.log(chalk.green(`✔ Lumio sudah versi paling baru (v${getAppVersion()}).`));
+    const status = await checkAndUpgradeApp(false, 0, false, true);
+    if (status === 'up-to-date') {
+      console.log(chalk.green(t('upToDate', { version: getAppVersion() })));
+    } else {
+      // install-failed was already reported by the upgrade spinner.
+      if (status === 'check-failed') console.error(chalk.red(t('upgradeCheckFailed', { version: getAppVersion() })));
+      process.exitCode = 1;
     }
   });
 
@@ -94,7 +102,7 @@ rules
   .option('-y, --yes', 'Save without asking')
   .action(async (options) => {
     if (options.lang && !['id', 'en'].includes(options.lang)) {
-      console.error(chalk.red('--lang harus id atau en'));
+      console.error(chalk.red(t('compileLangInvalid')));
       process.exit(1);
     }
     try {
@@ -121,10 +129,10 @@ program
   .option('--json', 'Output review result as raw JSON')
   .option('--core-only', 'Run deterministic rule checkers only (fast, no AI)')
   .option('--fail-on <level>', 'Exit with code 1 when findings reach this level: error | warning | never', 'error')
-  .option('--max-violations <number>', 'Batas maksimal temuan sebelum review berhenti & generate report', (val) => parseInt(val, 10))
+  .option('--max-violations <number>', 'Stop after N findings; the report holds exactly N findings', (val) => parseInt(val, 10))
   .action(async (options) => {
     if (!['full', 'diff'].includes(options.scope)) {
-      console.error(chalk.red(`--scope harus 'full' atau 'diff', bukan '${options.scope}'.`));
+      console.error(chalk.red(t('scopeInvalid', { scope: options.scope })));
       process.exit(2);
     }
     // Tier 1: Check App Version

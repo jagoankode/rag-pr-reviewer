@@ -6,7 +6,7 @@ import {
   clearActiveAbortController,
 } from '../core/nav.js';
 import { loadConfig } from '../core/config.js';
-import { LANGUAGE_NAME } from '../core/i18n.js';
+import { LANGUAGE_NAME, t } from '../core/i18n.js';
 import { callLLM } from '../core/llm-client.js';
 import { searchGuidelinesForDialog, listAllIndexedGuidelines } from '../core/db.js';
 import { getDynamicDialogPromptTemplate } from '../core/prompt-manager.js';
@@ -48,15 +48,15 @@ export async function runInteractiveKnowledgeDialog(): Promise<void> {
   const config = await loadConfig();
   const modelName = config.defaultModel || '';
   if (!modelName) {
-    console.log(chalk.yellow('\n⚠️  Belum ada model AI aktif. Pilih provider & model dulu di menu Model.\n'));
+    console.log(chalk.yellow(`\n${t('dialogNoModel')}\n`));
     return;
   }
   const version = getAppVersion();
   const termW = Math.max(60, Math.min(90, process.stdout.columns || 80));
 
   console.clear();
-  console.log(`${chalk.bold.hex('#F59E0B')('✨ Lumio')} ${chalk.gray(`v${version}`)} ${chalk.gray('›')} ${chalk.bold.cyan('Tanya Aturan Tim')}`);
-  console.log(chalk.gray('Tanyakan apa saja seputar panduan atau aturan tim • Tekan Esc untuk kembali\n'));
+  console.log(`${chalk.bold.hex('#F59E0B')('✨ Lumio')} ${chalk.gray(`v${version}`)} ${chalk.gray('›')} ${chalk.bold.cyan(t('dialogTitle'))}`);
+  console.log(chalk.gray(`${t('dialogIntro')}\n`));
   console.log(`${chalk.gray('─'.repeat(termW))}\n`);
 
   // Riwayat obrolan dalam sesi ini
@@ -64,7 +64,7 @@ export async function runInteractiveKnowledgeDialog(): Promise<void> {
 
   while (true) {
     const userPrompt = await input({
-      message: `${chalk.bold.cyan('👤 Anda')} ${chalk.gray('›')}`,
+      message: `${chalk.bold.cyan(t('dialogYou'))} ${chalk.gray('›')}`,
       hideEscHint: true,
       theme: {
         prefix: '',
@@ -81,18 +81,18 @@ export async function runInteractiveKnowledgeDialog(): Promise<void> {
       cleaned.toLowerCase() === 'b' ||
       cleaned.toLowerCase() === 'back'
     ) {
-      console.log(chalk.gray('\nKembali ke menu utama.\n'));
+      console.log(chalk.gray(`\n${t('dialogBack')}\n`));
       break;
     }
 
-    const spinner = ora(chalk.gray('Mencari aturan terkait... (Ctrl+C untuk batalkan)')).start();
+    const spinner = ora(chalk.gray(t('dialogSearching'))).start();
     const chatAbortController = createProcessAbortController();
 
     try {
       const relevantChunks = await searchGuidelinesForDialog(cleaned, 4);
 
       if (chatAbortController.signal.aborted) {
-        spinner.info(chalk.yellow('\nProses dibatalkan.'));
+        spinner.info(chalk.yellow(`\n${t('dialogCancelled')}`));
         clearActiveAbortController();
         continue;
       }
@@ -100,10 +100,10 @@ export async function runInteractiveKnowledgeDialog(): Promise<void> {
       if (relevantChunks.length === 0) {
         spinner.stop();
         clearActiveAbortController();
-        console.log(`\n${chalk.bold.hex('#F59E0B')('✨ Lumio')} ${chalk.gray('›')} ${chalk.white('Saya belum mempunyai informasi mengenai aturan itu.')}\n`);
+        console.log(`\n${chalk.bold.hex('#F59E0B')('✨ Lumio')} ${chalk.gray('›')} ${chalk.white(t('dialogUnknown'))}\n`);
 
         chatHistory.push({ role: 'user', text: cleaned });
-        chatHistory.push({ role: 'assistant', text: 'Saya belum mempunyai informasi mengenai aturan itu.' });
+        chatHistory.push({ role: 'assistant', text: t('dialogUnknown') });
         continue;
       }
 
@@ -116,10 +116,11 @@ export async function runInteractiveKnowledgeDialog(): Promise<void> {
         .join('\n\n---\n\n');
 
       const dialogTemplate = await getDynamicDialogPromptTemplate();
+      // Function replacers: rule text may contain `$&`, `$'` etc.
       const systemPrompt = dialogTemplate
-        .replace('{{ALL_TITLES_SUMMARY}}', allTitlesSummary || '(Belum ada aturan yang tersimpan)')
-        .replace('{{KNOWLEDGE_CONTEXT}}', knowledgeContext)
-        .replace('{{LANGUAGE}}', LANGUAGE_NAME[config.language || 'id']);
+        .replace('{{ALL_TITLES_SUMMARY}}', () => allTitlesSummary || '(Belum ada aturan yang tersimpan)')
+        .replace('{{KNOWLEDGE_CONTEXT}}', () => knowledgeContext)
+        .replace('{{LANGUAGE}}', () => LANGUAGE_NAME[config.language || 'id']);
 
       const historyPrompt = chatHistory.length > 0
         ? `Riwayat percakapan:\n${chatHistory.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n')}\n\nPertanyaan baru:\n${cleaned}`
@@ -131,7 +132,7 @@ export async function runInteractiveKnowledgeDialog(): Promise<void> {
         answer = await callLLM(fullPrompt, modelName, chatAbortController.signal);
       } catch (callErr: any) {
         if (chatAbortController.signal.aborted || callErr.name === 'AbortError') {
-          spinner.info(chalk.yellow('\nPertanyaan dibatalkan.'));
+          spinner.info(chalk.yellow(`\n${t('dialogQuestionCancelled')}`));
           continue;
         }
         throw callErr;
@@ -149,11 +150,11 @@ export async function runInteractiveKnowledgeDialog(): Promise<void> {
 
       if (relevantChunks.length > 0) {
         const titles = relevantChunks.map((c) => c.title).join(', ');
-        console.log(chalk.gray(`   └─ 📌 Sumber: ${titles}\n`));
+        console.log(chalk.gray(`   └─ ${t('dialogSources', { titles })}\n`));
       }
     } catch (err: any) {
       if (chatAbortController.signal.aborted || err.name === 'AbortError') {
-        spinner.info(chalk.yellow('\nProses dibatalkan oleh pengguna.'));
+        spinner.info(chalk.yellow(`\n${t('cancelledByUser')}`));
       } else {
         spinner.fail(chalk.red(`Error: ${err.message}`));
         logError('InteractiveDialog', err, { userPrompt: cleaned });

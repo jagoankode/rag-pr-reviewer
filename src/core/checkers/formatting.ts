@@ -17,8 +17,6 @@ const KEYWORD: Record<number, string> = {
   [ts.SyntaxKind.ThrowStatement]: 'throw', [ts.SyntaxKind.BreakStatement]: 'break', [ts.SyntaxKind.ContinueStatement]: 'continue',
 };
 
-const isCommentLine = (line: string): boolean => /^\s*(\/\/|\/\*|\*)/.test(line) || /\*\/\s*$/.test(line);
-
 /** Statement lists in which "first statement in its block" is meaningful. */
 function blockStatements(node: ts.Node): ts.NodeArray<ts.Statement> | undefined {
   if (ts.isBlock(node) || ts.isSourceFile(node) || ts.isModuleBlock(node) || ts.isCaseClause(node) || ts.isDefaultClause(node)) return node.statements;
@@ -30,17 +28,16 @@ export const format: Primitive<CheckOf<'format'>> = ({ source, lines, input, spe
   const out: RawFinding[] = [];
   if (spec.rule === 'eof-newline') {
     if (!input.content.length) return out;
-    if (!input.content.endsWith('\n')) out.push({ line: lines.length, column: lines[lines.length - 1].length + 1, key: 'missing' });
-    else if (/\n[ \t]*\n$/.test(input.content)) out.push({ line: lines.length - 1, column: 1, key: 'extra' });
+    // `\r\n` ends with `\n` too; a lone trailing `\r` is not a line ending.
+    if (!input.content.endsWith('\n')) out.push({ line: lines.length, column: lines[lines.length - 1].replace(/\r$/, '').length + 1, key: 'missing' });
+    else if (/\r?\n[ \t]*\r?\n$/.test(input.content)) out.push({ line: lines.length - 1, column: 1, key: 'extra' });
     return out;
   }
   const keywords = new Set(spec.keywords || []);
   walk(source, node => {
     if (spec.rule === 'semicolon' && NEEDS_SEMICOLON.has(node.kind) && !(ts.isPropertyDeclaration(node) && node.parent && !ts.isClassLike(node.parent))) {
-      const text = node.getText(source);
-      // A class member that ends with a block does not take a semicolon.
-      const endsWithBlock = ts.isPropertyDeclaration(node) && /}\s*$/.test(text) && !node.initializer;
-      if (!text.trimEnd().endsWith(';') && !endsWithBlock) {
+      // Methods, accessors and static blocks are other node kinds, so a property ending in `}` (`x: { a: number }`) still needs one.
+      if (!node.getText(source).trimEnd().endsWith(';')) {
         const end = source.getLineAndCharacterOfPosition(node.getEnd());
         out.push({ line: end.line + 1, column: end.character + 1 });
       }
@@ -56,8 +53,10 @@ export const format: Primitive<CheckOf<'format'>> = ({ source, lines, input, spe
       const statements = blockStatements(node.parent);
       if (!statements || statements.indexOf(node as ts.Statement) <= 0) return;
       const startLine = source.getLineAndCharacterOfPosition(node.getStart(source)).line;
+      // Lines that start after the previous token hold only comments or blanks; `a(); /* x */` is code.
+      const trivia = node.getFullStart();
       let k = startLine - 1;
-      while (k >= 0 && isCommentLine(lines[k])) k--;
+      while (k >= 0 && source.getPositionOfLineAndCharacter(k, 0) >= trivia && lines[k].trim() !== '') k--;
       if (k >= 0 && lines[k].trim() !== '') out.push({ node, values: { keyword } });
     }
   });

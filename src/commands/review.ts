@@ -14,6 +14,7 @@ import { loadConfig } from '../core/config.js';
 import { callLLM } from '../core/llm-client.js';
 
 import { logError } from '../core/logger.js';
+import { out, t } from '../core/i18n.js';
 import { createProcessAbortController, clearActiveAbortController } from '../core/nav.js';
 import { FileReviewResult, PRReviewResult, LineViolation } from '../core/schema.js';
 
@@ -30,7 +31,7 @@ export interface ReviewOptions {
   coreOnly?: boolean;
   saveReport?: boolean;
   outputDir?: string;
-  maxViolations?: number; // Batas maksimal temuan kumulatif sebelum berhenti & generate report
+  maxViolations?: number; // Jumlah temuan maksimal di laporan; audit berhenti begitu batas tercapai
   concurrency?: number;   // Jumlah file yang diaudit AI secara paralel
 }
 
@@ -96,13 +97,13 @@ export function extractReviewResult(rawText: string): FileReviewResult {
 export async function reviewCommand(options: ReviewOptions): Promise<PRReviewResult | void> {
   const isRepo = await isGitRepo();
   if (!isRepo) {
-    console.error(chalk.red('Error: Perintah harus dijalankan di dalam git repository!'));
+    console.error(chalk.red(t('notGitRepoError')));
     return;
   }
 
   const abortController = createProcessAbortController();
   const log = (...args: unknown[]) => { if (!options.json) console.log(...args); };
-  const spinner = ora({ text: chalk.blue('Mengambil git diff... (Tekan Ctrl+C untuk batalkan)'), isSilent: !!options.json }).start();
+  const spinner = ora({ text: chalk.blue(t('reviewFetchingDiff')), isSilent: !!options.json }).start();
 
   try {
     const config = await loadConfig();
@@ -110,9 +111,9 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     const sourceBranch = options.source;
 
     if (targetBranch && sourceBranch) {
-      spinner.text = chalk.blue(`Mengambil git diff: ${targetBranch}...${sourceBranch} (PR style)...`);
+      spinner.text = chalk.blue(t('reviewDiffPr', { target: targetBranch, source: sourceBranch }));
     } else if (targetBranch) {
-      spinner.text = chalk.blue(`Mengambil git diff terhadap branch: ${targetBranch}...`);
+      spinner.text = chalk.blue(t('reviewDiffTarget', { target: targetBranch }));
     }
 
     // Fetch before resolving refs, then use immutable SHAs for both diff and content.
@@ -128,7 +129,7 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     });
 
     if (abortController.signal.aborted) {
-      spinner.info(chalk.yellow('\nProses review dibatalkan.'));
+      spinner.info(chalk.yellow(`\n${t('reviewCancelled')}`));
       return;
     }
 
@@ -136,34 +137,34 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
       spinner.info(
         chalk.yellow(
           options.staged
-            ? 'Tidak ada perubahan staged (git diff --staged kosong).'
+            ? t('reviewNoStaged')
             : targetBranch && sourceBranch
-            ? `Tidak ada perbedaan antara branch ${targetBranch} dan ${sourceBranch}.`
+            ? t('reviewNoDiffBranches', { target: targetBranch, source: sourceBranch })
             : targetBranch
-            ? `Tidak ada perbedaan terhadap branch ${targetBranch}.`
-            : 'Tidak ada perubahan yang terdeteksi (git diff kosong).'
+            ? t('reviewNoDiffTarget', { target: targetBranch })
+            : t('reviewNoChanges')
         )
       );
       return;
     }
 
-    spinner.text = chalk.cyan('Mem-parse diff per file...');
+    spinner.text = chalk.cyan(t('reviewParsing'));
     const fileDiffs = parseAnnotatedDiffFiles(rawDiff).sort((a,b) => a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
 
     if (fileDiffs.length === 0) {
-      spinner.info(chalk.yellow('Tidak ada perubahan baris kode (mungkin hanya file biner/dihapus).'));
+      spinner.info(chalk.yellow(t('reviewNoLineChanges')));
       return;
     }
 
     const modelName = options.model || config.defaultModel || '';
-    if (!options.coreOnly && !modelName) throw new Error('Belum ada model AI aktif. Pilih provider & model via TUI (`lumio` → Model), atau pakai --model, atau jalankan dengan --core-only.');
-    spinner.text = chalk.cyan('Memuat rules dari database...');
+    if (!options.coreOnly && !modelName) throw new Error(t('noModelReview'));
+    spinner.text = chalk.cyan(t('loadingRules'));
     const rules = await loadReviewRules(config);
-    spinner.succeed(chalk.green(`Ditemukan ${fileDiffs.length} file berubah, ${rules.rules.length} rules aktif. Memulai audit...\n`));
+    spinner.succeed(chalk.green(`${t('reviewStarting', { files: fileDiffs.length, rules: rules.rules.length })}\n`));
 
     const inputs = captureReviewInputs(fileDiffs, { ...options, target: targetBranch ? refs.base : undefined, source: sourceBranch && targetBranch ? refs.head : undefined });
     const maxViolations = typeof options.maxViolations === 'number' && options.maxViolations > 0 ? options.maxViolations : undefined;
-    const audits = await auditInputs(inputs, {
+    const { audits, limitNote, partial } = await auditInputs(inputs, {
       concurrency: options.coreOnly ? inputs.length : Math.max(1, options.concurrency || 4),
       maxViolations,
       signal: abortController.signal,
@@ -175,8 +176,9 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     if (abortController.signal.aborted) return;
 
     const repository = repoAudit(rules, readRepoContext(refs, sourceBranch));
-    const reviewResult = summarizeAudit(audits, rules, repository);
-    if (options.coreOnly) reviewResult.notes = ['Core-only: hanya checker deterministik; rule semantik tidak diperiksa AI.', ...(reviewResult.notes || [])];
+    const reviewResult = summarizeAudit(audits, rules, repository, partial);
+    if (limitNote) reviewResult.notes = [limitNote, ...(reviewResult.notes || [])];
+    if (options.coreOnly) reviewResult.notes = [out('coreOnly'), ...(reviewResult.notes || [])];
     reviewResult.reviewSnapshot = snapshotReview(inputs, rules, rawDiff, refs, options.scope || 'full');
 
     if (options.json) {
@@ -202,7 +204,7 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
           model: options.coreOnly ? 'core-only' : modelName,
           outputDir: options.outputDir,
         });
-        log(chalk.gray(`💾 History report tersimpan di: ${chalk.underline.cyan(savedPath)}\n`));
+        log(chalk.gray(`${t('reportSaved', { path: chalk.underline.cyan(savedPath) })}\n`));
       } catch (err: any) {
         logError('SaveReviewReport', err);
       }
@@ -211,22 +213,22 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     return reviewResult;
   } catch (error: any) {
     if (abortController.signal.aborted || error.name === 'AbortError') {
-      spinner.info(chalk.yellow('\nReview dibatalkan oleh pengguna.'));
+      spinner.info(chalk.yellow(`\n${t('reviewCancelledByUser')}`));
       return;
     }
-    spinner.fail(chalk.red(`Review gagal: ${error.message}`));
+    spinner.fail(chalk.red(t('reviewFailed', { message: error.message })));
     logError('ReviewCommand', error, { options });
-    console.log(chalk.yellow('\n💡 Tips: Pastikan konfigurasi AI Provider, API key, atau nama branch sudah benar di menu TUI.\n'));
+    console.log(chalk.yellow(`\n${t('reviewTips')}\n`));
     return;
   } finally {
     clearActiveAbortController();
   }
 }
 
-/** Audits files with bounded parallelism; results keep input order. Stops scheduling once maxViolations is reached. */
-async function auditInputs(inputs: ReviewInput[], opts: { concurrency: number; maxViolations?: number; signal: AbortSignal; quiet: boolean; audit: (input: ReviewInput) => Promise<FileAudit> }): Promise<FileAudit[]> {
+/** Audits files with bounded parallelism; results keep input order. Stops scheduling once maxViolations is reached and trims the result to that many findings. */
+async function auditInputs(inputs: ReviewInput[], opts: { concurrency: number; maxViolations?: number; signal: AbortSignal; quiet: boolean; audit: (input: ReviewInput) => Promise<FileAudit> }): Promise<{ audits: FileAudit[]; limitNote?: string; partial?: boolean }> {
   const results: (FileAudit | undefined)[] = new Array(inputs.length);
-  const spinner = ora({ text: `Auditing 0/${inputs.length} files...`, isSilent: opts.quiet }).start();
+  const spinner = ora({ text: t('auditing', { done: 0, total: inputs.length }), isSilent: opts.quiet }).start();
   let next = 0, done = 0, total = 0, stopped = false;
   const worker = async () => {
     while (!stopped && !opts.signal.aborted && next < inputs.length) {
@@ -235,18 +237,32 @@ async function auditInputs(inputs: ReviewInput[], opts: { concurrency: number; m
       results[index] = audit;
       done++;
       total += audit.violations.length;
-      spinner.text = `Auditing ${done}/${inputs.length} files... (${total} temuan)`;
+      spinner.text = t('auditingFindings', { done, total: inputs.length, count: total });
       if (!opts.quiet && audit.violations.length) {
-        spinner.stopAndPersist({ symbol: audit.violations.some(v => v.severity === 'error') ? chalk.red('✖') : chalk.yellow('▲'), text: `${audit.file}: ${audit.violations.length} temuan` });
+        spinner.stopAndPersist({ symbol: audit.violations.some(v => v.severity === 'error') ? chalk.red('✖') : chalk.yellow('▲'), text: t('fileFindings', { file: audit.file, count: audit.violations.length }) });
         spinner.start();
       }
       if (opts.maxViolations && total >= opts.maxViolations) stopped = true;
     }
   };
   await Promise.all(Array.from({ length: Math.min(opts.concurrency, inputs.length) }, worker));
-  spinner.succeed(`${done}/${inputs.length} files diaudit (${total} temuan)`);
-  if (stopped && !opts.quiet) console.log(chalk.yellow(`\n⚠️  Batas maksimal temuan tercapai (${total} >= ${opts.maxViolations}). Review dihentikan lebih awal.\n`));
-  return results.filter((a): a is FileAudit => !!a);
+  spinner.succeed(t('audited', { done, total: inputs.length, count: total }));
+  const audits = results.filter((a): a is FileAudit => !!a);
+  if (!stopped) return { audits };
+  // Files already in flight finish past the limit; unaudited files leave the review incomplete.
+  const limitNote = out('limitReached', { shown: opts.maxViolations!, total, unaudited: inputs.length - done });
+  if (!opts.quiet) console.log(chalk.yellow(`\n⚠️  ${limitNote}\n`));
+  return { audits: trimFindings(audits, opts.maxViolations!), limitNote, partial: done < inputs.length };
+}
+
+/** Keeps exactly `max` findings, errors before warnings (each in input order), so a dropped error never softens the verdict. */
+export function trimFindings(audits: FileAudit[], max: number): FileAudit[] {
+  const all = audits.flatMap(a => a.violations);
+  const keep = new Set([...all.filter(v => v.severity === 'error'), ...all.filter(v => v.severity !== 'error')].slice(0, max));
+  return audits.map(a => {
+    const kept = a.violations.filter(v => keep.has(v));
+    return kept.length === a.violations.length ? a : { ...a, violations: kept, complete: false };
+  });
 }
 
 function printReviewTerminalReport(result: PRReviewResult) {
@@ -257,16 +273,17 @@ function printReviewTerminalReport(result: PRReviewResult) {
       ? chalk.bold.red
       : chalk.bold.yellow;
 
-  console.log(chalk.bold.cyan('═════════════════════ PULL REQUEST REVIEW REPORT ═════════════════════'));
-  console.log(`Status  : ${statusColor(result.status)}`);
-  console.log(`Summary : ${result.summary}`);
-  if (result.reviewSnapshot) console.log(chalk.gray(`Review  : ${result.reviewSnapshot.fingerprint.slice(0, 16)} | ${result.reviewSnapshot.mode} | scope=${result.reviewSnapshot.scope}`));
+  console.log(chalk.bold.cyan(`═════════════════════ ${out('reportTitle')} ═════════════════════`));
+  const label = (key: 'statusLabel' | 'summaryLabel' | 'reviewLabel') => out(key).padEnd(9);
+  console.log(`${label('statusLabel')}: ${statusColor(result.status)}`);
+  console.log(`${label('summaryLabel')}: ${result.summary}`);
+  if (result.reviewSnapshot) console.log(chalk.gray(`${label('reviewLabel')}: ${result.reviewSnapshot.fingerprint.slice(0, 16)} | ${result.reviewSnapshot.mode} | scope=${result.reviewSnapshot.scope}`));
   console.log('');
 
   for (const r of result.repository || []) {
     console.log(`${r.severity === 'error' ? chalk.bgRed.white.bold(' ERROR ') : chalk.bgYellow.black.bold(' WARN ')} ${chalk.bold('git')} ${chalk.gray(`[${r.rule}]`)}`);
     console.log(`    ${chalk.whiteBright(r.comment)}`);
-    if (r.suggestedFix) console.log(`    ${chalk.green('Fix: ' + r.suggestedFix)}`);
+    if (r.suggestedFix) console.log(`    ${chalk.green(`${out('fix')}: ${r.suggestedFix}`)}`);
   }
   if (result.repository?.length) console.log('');
 
@@ -274,20 +291,19 @@ function printReviewTerminalReport(result: PRReviewResult) {
   for (const v of result.violations) byFile.set(v.file, [...(byFile.get(v.file) || []), v]);
   for (const [file, items] of byFile) {
     const errors = items.filter(v => v.severity === 'error').length;
-    console.log(`${chalk.bold.underline(file)} ${chalk.gray(`(${errors} error, ${items.length - errors} warning)`)}`);
+    console.log(`${chalk.bold.underline(file)} ${chalk.gray(out('fileCounts', { errors, warnings: items.length - errors }))}`);
     for (const v of items) {
       const tag = v.severity === 'error' ? chalk.red('error  ') : chalk.yellow('warning');
-      const source = v.engine === 'ai' ? chalk.magenta(' [AI]') : '';
-      console.log(`  ${chalk.gray(`${v.line}:${v.column ?? 1}`.padEnd(8))} ${tag} ${v.comment}${source}`);
-      console.log(`  ${' '.repeat(8)} ${chalk.gray(`↳ ${v.rule}`)}${v.suggestedFix ? chalk.green(`  Fix: ${v.suggestedFix}`) : ''}`);
+      console.log(`  ${chalk.gray(`${v.line}:${v.column ?? 1}`.padEnd(8))} ${tag} ${v.comment}`);
+      console.log(`  ${' '.repeat(8)} ${chalk.gray(`↳ ${v.rule}`)}${v.suggestedFix ? chalk.green(`  ${out('fix')}: ${v.suggestedFix}`) : ''}`);
     }
     console.log('');
   }
 
   if (!result.violations.length && !result.repository?.length) {
-    console.log(result.status === 'APPROVE' ? chalk.green('✔ Tidak ada pelanggaran.') : chalk.yellow('Tidak ada pelanggaran terkonfirmasi, tetapi review belum lengkap (lihat catatan).'));
+    console.log(result.status === 'APPROVE' ? chalk.green(out('noViolations')) : chalk.yellow(out('noViolationsIncomplete')));
   }
-  if (result.skippedFiles?.length) console.log(chalk.gray(`Dilewati: ${result.skippedFiles.map(s => `${s.file} (${s.reason})`).join(', ')}`));
+  if (result.skippedFiles?.length) console.log(chalk.gray(`${out('skipped')}: ${result.skippedFiles.map(s => `${s.file} (${s.reason})`).join(', ')}`));
   for (const note of result.notes || []) console.log(chalk.yellow(`⚠ ${note}`));
   console.log(chalk.bold.cyan('\n═══════════════════════════════════════════════════════════════════\n'));
 }

@@ -6,6 +6,7 @@ import {
   password as inqPassword,
 } from '@inquirer/prompts';
 import chalk from 'chalk';
+import { t } from './i18n.js';
 import * as readline from 'node:readline';
 
 let activeAbortController: AbortController | null = null;
@@ -23,10 +24,10 @@ export function initNavigationGuard() {
 
   process.on('SIGINT', () => {
     if (activeAbortController && !activeAbortController.signal.aborted) {
-      console.log(chalk.yellow('\n\n⚠️  [Membatalkan proses yang sedang berjalan... Menutup dengan aman]'));
+      console.log(chalk.yellow(`\n\n${t('aborting')}`));
       activeAbortController.abort();
     } else {
-      console.log(chalk.gray('\n\nSampai jumpa! 👋\n'));
+      console.log(chalk.gray(`\n\n${t('bye')}\n`));
       process.exit(0);
     }
   });

@@ -1,12 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { auditFile, coreAudit, summarizeAudit, stableFindings } from '../src/core/review-engine.js';
+import { auditFile, coreAudit, fileMatchesPattern, summarizeAudit, stableFindings } from '../src/core/review-engine.js';
 import { snapshotRules } from '../src/core/review-rules.js';
 import { snapshotReview } from '../src/core/review-snapshot.js';
 import { chunkMarkdown } from '../src/core/chunker.js';
 import { parseAnnotatedDiffFiles } from '../src/core/diff-parser.js';
 import { formatReportToMarkdown } from '../src/core/history.js';
 import { ReviewInput } from '../src/core/review-input.js';
+import { setLanguage } from '../src/core/i18n.js';
+setLanguage('en');
 const input: ReviewInput = { file:'a.ts', content:'const a = 1;\n', folderFiles:['b.ts','a.ts'], addedLines:[1], diff:'diff', scope:'full', hash:'untrusted' };
 const rules = snapshotRules([{ id:'no-var', source:'team', title:'N1 Declarations', content:'- Never use `var`; always use `const` by default.', checks:[{ type:'forbid-syntax', syntax:'var', severity:'error', message:'Use const instead of var.' }] }]);
 const refs = {base:'base',head:'head',mergeBase:'ancestor',mode:'committed-pr'};
@@ -45,6 +47,18 @@ test('saved report groups findings per file and exposes snapshot, branch finding
  for(const text of [result.reviewSnapshot.fingerprint,'### `a.ts`','| 1 | error |','Branch & Commit','abc fix','Skipped Files','gone.ts','ancestor'])assert.ok(md.includes(text),text);
 });
 
+test('report output follows the display language; rule comments stay as written',()=>{
+ const audits=[coreAudit({...input,content:'var a = 1;\n'},rules),{file:'gone.ts',violations:[],coverage:[],complete:true,skipped:'File deleted'}];
+ try {
+  setLanguage('id');
+  const result=summarizeAudit(audits,rules);
+  assert.match(result.summary,/^1 file direview; 1 error dan 0 warning di 1 file\.$/);
+  assert.deepEqual(result.skippedFiles,[{file:'gone.ts',reason:'File dihapus'}]);
+  const md=formatReportToMarkdown(result);
+  for(const text of ['# Lumio - Laporan Review Pull Request','## Ringkasan','File yang Dilewati','Use const instead of var.'])assert.ok(md.includes(text),text);
+ } finally { setLanguage('en'); }
+});
+
 test('two independent repository checkouts produce identical core result and fingerprint',async()=>{
  const fs=await import('node:fs');const os=await import('node:os');const path=await import('node:path');
  const {execFileSync}=await import('node:child_process');
@@ -71,4 +85,13 @@ test('two independent repository checkouts produce identical core result and fin
   assert.deepEqual(reports[0],reports[1]);
   assert.equal(reports[0].status,'REQUEST_CHANGES');
  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+test('rule targetFiles use the same globs as checks: folders, braces and exact names',()=>{
+ assert.equal(fileMatchesPattern('src/a/index.ts',['**/index.ts']),true);
+ assert.equal(fileMatchesPattern('src/a/index.tsx',['**/index.ts']),false);
+ assert.equal(fileMatchesPattern('src/features/pay/api.ts',['src/features/**/*.ts']),true);
+ assert.equal(fileMatchesPattern('src/shared/api.ts',['src/features/**/*.ts']),false);
+ assert.equal(fileMatchesPattern('src/a/b.tsx',['*.{ts,tsx}']),true);
+ assert.equal(fileMatchesPattern('src/a/b.ts',undefined),true);
+ assert.equal(fileMatchesPattern('src/a/b.ts',['*']),true);
 });

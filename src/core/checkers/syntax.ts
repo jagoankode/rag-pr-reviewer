@@ -19,6 +19,9 @@ const each = (ctx: Ctx, test: (node: ts.Node) => ts.Node | false | undefined): R
 
 const inJsx = (n: ts.Node): boolean => hasAncestor(n, p => ts.isJsxExpression(p));
 const isJsxNode = (n: ts.Node): boolean => ts.isJsxElement(n) || ts.isJsxSelfClosingElement(n) || ts.isJsxFragment(n);
+/** `createElement(…)` or `React.createElement(…)`, not `document.createElement(…)`. */
+const isCreateElement = (n: ts.Node): boolean => ts.isCallExpression(n) && (ts.isIdentifier(n.expression) ? n.expression.text === 'createElement'
+  : ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'createElement' && ts.isIdentifier(n.expression.expression) && n.expression.expression.text === 'React');
 
 const ARITHMETIC = new Set([ts.SyntaxKind.AsteriskToken, ts.SyntaxKind.SlashToken, ts.SyntaxKind.PlusToken, ts.SyntaxKind.MinusToken, ts.SyntaxKind.PercentToken,
   ts.SyntaxKind.GreaterThanToken, ts.SyntaxKind.LessThanToken, ts.SyntaxKind.GreaterThanEqualsToken, ts.SyntaxKind.LessThanEqualsToken,
@@ -33,19 +36,27 @@ interface CommentRange { pos: number; end: number; kind: ts.CommentKind; }
 function collectComments(source: ts.SourceFile): CommentRange[] {
   const text = source.getFullText();
   const seen = new Map<number, CommentRange>();
+  const jsxText: ts.Node[] = [];
   const add = (ranges: ts.CommentRange[] | undefined) => ranges?.forEach(r => seen.set(r.pos, r));
   const visit = (node: ts.Node) => {
+    if (ts.isJsxText(node)) jsxText.push(node);
     add(ts.getLeadingCommentRanges(text, node.getFullStart()));
     add(ts.getTrailingCommentRanges(text, node.getEnd()));
     // getChildren includes tokens such as a closing `}`, so comments before them are found too.
     node.getChildren(source).forEach(visit);
   };
   visit(source);
-  return [...seen.values()].sort((a, b) => a.pos - b.pos);
+  // `<p>// later</p>` is text, but the trivia scanner would read it as a comment.
+  return [...seen.values()].filter(r => !jsxText.some(j => r.pos >= j.pos && r.pos < j.end)).sort((a, b) => a.pos - b.pos);
 }
 
 const TOOL_DIRECTIVE = /^\/\*\s*(eslint|istanbul|webpack|prettier|global|jshint|c8|@ts-)/;
-const CODE_LIKE = /^(import|export|const|let|var|return|if|for|while|function|class|await|async)\b|;\s*$|^[\w$.]+\(.*\)\s*;?$|^<\/?[A-Za-z][^>]*>?$|^[{}]\s*$/;
+// Keywords alone are prose too (`if the user…`, `return early…`), so each needs the shape of a statement.
+const CODE_LIKE = new RegExp([
+  /^import\s+(?:[\w$*{},\s]+\s+from\s+)?['"]/, /^export\s+(?:default\b|const\s|let\s|function\b|class\s|type\s|interface\s|[{*])/,
+  /^(?:const|let|var)\s+[\w${}[\],\s]+(?::[^=]+)?=/, /^(?:if|for|while|switch)\s*\(/, /^(?:async\s+)?function\b\s*[\w$]*\s*\(/,
+  /^class\s+[\w$]+\s*(?:extends\b|\{)/, /^await\s+[\w$.]+\(/, /;\s*$/, /^[\w$.]+\(.*\)\s*;?$/, /^<\/?[A-Za-z][^>]*>?$/, /^[{}]\s*$/,
+].map(r => r.source).join('|'));
 
 function comments(ctx: Ctx, test: (raw: string, range: CommentRange, text: string) => number | undefined, values: (raw: string) => Record<string, string> = () => ({})): RawFinding[] {
   const out: RawFinding[] = [];
@@ -97,11 +108,8 @@ const SYNTAX: Record<CheckOf<'forbid-syntax'>['syntax'], (ctx: Ctx) => RawFindin
     });
     return out;
   },
-  jsx: ctx => each(ctx, n => {
-    const createElement = ts.isCallExpression(n) && calleeName(n) === 'createElement';
-    // Report the outermost element only.
-    return (isJsxNode(n) || createElement) && !(n.parent && (ts.isJsxElement(n.parent) || ts.isJsxFragment(n.parent))) && n;
-  }),
+  // Report the outermost element only: JSX inside `{…}` or an attribute belongs to the element around it.
+  jsx: ctx => each(ctx, n => (isJsxNode(n) || isCreateElement(n)) && !hasAncestor(n, p => isJsxNode(p) || isCreateElement(p)) && n),
   'jsx-and-number': ctx => each(ctx, n => {
     if (!ts.isBinaryExpression(n) || n.operatorToken.kind !== ts.SyntaxKind.AmpersandAmpersandToken || !inJsx(n)) return;
     const left = unwrap(n.left);
@@ -124,14 +132,19 @@ const SYNTAX: Record<CheckOf<'forbid-syntax'>['syntax'], (ctx: Ctx) => RawFindin
     });
     return out;
   },
-  'runtime-logic': ctx => ctx.source.statements.filter(s =>
-    ts.isFunctionDeclaration(s) || ts.isClassDeclaration(s) || ts.isExpressionStatement(s) || ts.isIfStatement(s) || containsJsx(s) ||
-    (ts.isVariableStatement(s) && s.declarationList.declarations.some(d => {
-      const init = d.initializer && unwrap(d.initializer);
-      return !!init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init));
-    }))).map(s => ({ node: s, values: { text: short(s, ctx.source) } })),
+  'runtime-logic': ctx => {
+    // `'use client';` in the prologue is a directive, not an expression that runs.
+    const prologue = new Set(directives(ctx.source).filter((d, i) => d.index === i).map(d => d.statement));
+    return ctx.source.statements.filter(s => !prologue.has(s) && (
+      ts.isFunctionDeclaration(s) || ts.isClassDeclaration(s) || ts.isExpressionStatement(s) || ts.isIfStatement(s) || containsJsx(s) ||
+      (ts.isVariableStatement(s) && s.declarationList.declarations.some(d => {
+        const init = d.initializer && unwrap(d.initializer);
+        return !!init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init));
+      })))).map(s => ({ node: s, values: { text: short(s, ctx.source) } }));
+  },
   'non-export-statement': ctx => ctx.source.statements
-    .filter(s => !ts.isExportDeclaration(s) && !ts.isExportAssignment(s) && !ts.isImportDeclaration(s))
+    .filter(s => !ts.isExportDeclaration(s) && !ts.isExportAssignment(s) && !ts.isImportDeclaration(s) &&
+      !(ts.canHaveModifiers(s) && ts.getModifiers(s)?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)))
     .map(s => ({ node: s, values: { text: short(s, ctx.source) } })),
   // A directive only takes effect in the prologue, i.e. when every statement before it is a directive too.
   'misplaced-directive': ctx => directives(ctx.source).filter((d, i) => d.index !== i).map(d => ({ node: d.statement, values: { value: d.text, text: d.text } })),
@@ -155,10 +168,14 @@ const SYNTAX: Record<CheckOf<'forbid-syntax'>['syntax'], (ctx: Ctx) => RawFindin
     const allow = ctx.spec.allow || [];
     const out: RawFinding[] = [];
     walk(ctx.source, n => {
-      if (!ts.isNumericLiteral(n) || allow.includes(n.text) || inNamedConstant(n) || hasAncestor(n, p => ts.isTypeNode(p))) return;
+      if (!ts.isNumericLiteral(n)) return;
+      // `-1` is compared and reported signed, so allow ["1"] does not cover it.
+      const negative = ts.isPrefixUnaryExpression(n.parent) && n.parent.operator === ts.SyntaxKind.MinusToken;
+      const value = negative ? `-${n.text}` : n.text;
+      if (allow.includes(value) || inNamedConstant(n) || hasAncestor(n, p => ts.isTypeNode(p))) return;
       const parent = n.parent && ts.isPrefixUnaryExpression(n.parent) ? n.parent.parent : n.parent;
       const inLogic = (ts.isBinaryExpression(parent) && ARITHMETIC.has(parent.operatorToken.kind)) || (ts.isCallExpression(parent) && parent.arguments.some(a => unwrap(a) === n || unwrap(a) === n.parent));
-      if (inLogic) out.push({ node: n, values: { value: n.text, text: n.text } });
+      if (inLogic) out.push({ node: negative ? n.parent : n, values: { value, text: value } });
     });
     return out;
   },
@@ -187,7 +204,7 @@ const SYNTAX: Record<CheckOf<'forbid-syntax'>['syntax'], (ctx: Ctx) => RawFindin
   }),
   'todo-without-ticket': ctx => {
     const ticket = ctx.spec.ticketPattern || '\\S+';
-    const marker = new RegExp(`\\b(TODO|FIXME)\\b(?!\\s*\\(${ticket}\\))`);
+    const marker = new RegExp(`\\b(TODO|FIXME)\\b(?!\\s*\\((?:${ticket})\\))`);
     return comments(ctx, raw => raw.match(marker)?.index, raw => ({ value: raw.match(marker)?.[1] || '' }));
   },
   'hook-name-without-hook-call': ctx => {
@@ -195,7 +212,8 @@ const SYNTAX: Record<CheckOf<'forbid-syntax'>['syntax'], (ctx: Ctx) => RawFindin
     walk(ctx.source, n => {
       if (!isFunctionLike(n) || !n.body) return;
       const name = functionName(n);
-      if (!isHookName(name)) return;
+      // A bare `use` has no plain name to suggest.
+      if (!isHookName(name) || name === 'use') return;
       let callsHook = false;
       walk(n.body, c => { if (ts.isCallExpression(c) && isHookName(calleeName(c))) callsHook = true; });
       if (!callsHook) out.push({ node: n, values: { name, text: name, plain: name![3]?.toLowerCase() + name!.slice(4) } });

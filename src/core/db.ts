@@ -9,7 +9,8 @@ import chalk from 'chalk';
 import { DocChunk } from './chunker.js';
 import { AppConfig, getActiveAIProvider, loadConfig, getConfigDir } from './config.js';
 import { createTfIdfIndex } from './local-embedder.js';
-import { getNormHash } from './dedup.js';
+import { getNormHash, cosineSimilarity } from './dedup.js';
+import { t } from './i18n.js';
 import { syncGuidelinesRules, readCachedRules } from './updater.js';
 import { rankGuidelinesByRelevance } from './matcher.js';
 import { logError, logInfo } from './logger.js';
@@ -27,7 +28,7 @@ export interface GuidelineRecord {
 }
 
 let dbInstance: lancedb.Connection | null = null;
-let qdrantInstance: QdrantClient | null = null;
+let qdrantInstance: { key: string; client: QdrantClient } | null = null;
 
 export async function getDb(): Promise<lancedb.Connection> {
   if (!dbInstance) {
@@ -41,7 +42,7 @@ function wrapDbWriteError(err: any): Error {
   const status = err?.status ?? err?.statusCode;
   const msg = String(err?.message || err?.data?.status?.error || err || '');
   if (status === 401 || status === 403 || /unauthorized|forbidden|permission denied/i.test(msg)) {
-    return new Error('Anda tidak dapat menambah atau mengubah aturan tim.');
+    return new Error(t('dbNoWriteAccess'));
   }
   return err instanceof Error ? err : new Error(String(err));
 }
@@ -63,9 +64,7 @@ export async function getQdrantClient(): Promise<{ client: QdrantClient; collect
   const collection = (config.qdrantCollection || '').trim();
 
   if (!rawUrl || !collection) {
-    throw new Error(
-      'Qdrant URL dan Collection belum diset! Silakan konfigurasi via TUI (`lumio` -> "Database Storage Mode") sebelum menjalankan operasi database.'
-    );
+    throw new Error(t('qdrantNotConfigured'));
   }
 
   const url = rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : `https://${rawUrl}`;
@@ -75,20 +74,18 @@ export async function getQdrantClient(): Promise<{ client: QdrantClient; collect
   const defaultPort = parsedUrl.protocol === 'https:' ? 443 : 80;
   const port = parsedUrl.port ? Number(parsedUrl.port) : defaultPort;
 
-  if (!qdrantInstance) {
-    qdrantInstance = new QdrantClient({
-      url,
-      port,
-      apiKey,
-      checkCompatibility: false,
-    });
+  // Keyed so URL/API key changes saved in the TUI take effect without a restart.
+  const key = JSON.stringify([url, apiKey || '']);
+  if (qdrantInstance?.key !== key) {
+    qdrantInstance = { key, client: new QdrantClient({ url, port, apiKey, checkCompatibility: false }) };
   }
+  const client = qdrantInstance.client;
 
-  const collections = await qdrantInstance.getCollections();
+  const collections = await client.getCollections();
   const exists = collections.collections.some((c) => c.name === collection);
   if (!exists) {
     const vectorSize = getVectorSize(config);
-    await qdrantInstance.createCollection(collection, {
+    await client.createCollection(collection, {
       vectors: {
         size: vectorSize,
         distance: 'Cosine',
@@ -96,7 +93,20 @@ export async function getQdrantClient(): Promise<{ client: QdrantClient; collect
     });
   }
 
-  return { client: qdrantInstance, collection };
+  return { client, collection };
+}
+
+/** Scrolls every point of a collection; a single scroll only returns one page. */
+export async function scrollAllPoints(client: QdrantClient, collection: string): Promise<any[]> {
+  const all: any[] = [];
+  let offset: string | number | undefined;
+  do {
+    const page = await client.scroll(collection, { limit: 256, offset, with_payload: true, with_vector: false });
+    all.push(...(page.points || []));
+    const next = page.next_page_offset;
+    offset = typeof next === 'string' || typeof next === 'number' ? next : undefined;
+  } while (offset !== undefined);
+  return all;
 }
 
 async function resolveEmbeddingClient(config: AppConfig) {
@@ -178,10 +188,10 @@ export async function listAllIndexedGuidelines(): Promise<{ id: string; source: 
   if (config.dbType === 'qdrant') {
     try {
       const { client, collection } = await getQdrantClient();
-      const points = await client.scroll(collection, { limit: 500, with_payload: true });
-      return points.points
+      const points = await scrollAllPoints(client, collection);
+      return points
         .filter((p: any) => p.payload?.source !== 'system-prompt')
-        .map((p) => {
+        .map((p: any) => {
           const payload = p.payload as any;
           return {
             id: String(p.id),
@@ -191,7 +201,7 @@ export async function listAllIndexedGuidelines(): Promise<{ id: string; source: 
           };
         });
     } catch (err: any) {
-      throw new Error(`Gagal membaca data dari Qdrant VPS: ${err.message}`);
+      throw new Error(t('qdrantReadFailed', { message: err.message }));
     }
   }
 
@@ -220,10 +230,9 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
   if (config.dbType === 'qdrant') {
     const { client, collection } = await getQdrantClient();
 
-    const existingPoints = await client.scroll(collection, { limit: 1000, with_payload: true });
-    const existingHashes = new Set(
-      existingPoints.points.map((p: any) => p.payload?.contentHash || getNormHash(p.payload?.content || ''))
-    );
+    const existingPoints = await scrollAllPoints(client, collection);
+    // Recomputed from content: stored contentHash may come from an older normalization.
+    const existingHashes = new Set(existingPoints.map((p: any) => getNormHash(p.payload?.content || '')));
 
     const uniqueChunks: DocChunk[] = [];
     const skippedTitles: string[] = [];
@@ -305,9 +314,7 @@ export async function insertChunks(chunks: DocChunk[]): Promise<InsertResult> {
     existingRecords = await table.query().toArray();
   }
 
-  const existingHashes = new Set(
-    existingRecords.map((r: any) => r.contentHash || getNormHash(r.content || ''))
-  );
+  const existingHashes = new Set(existingRecords.map((r: any) => getNormHash(r.content || '')));
 
   const uniqueChunks: DocChunk[] = [];
   const skippedTitles: string[] = [];
@@ -469,7 +476,7 @@ export async function setRuleChecks(id: string, checks: unknown[], checksComplet
 
   // Local LanceDB Mode: checks are kept as a JSON string column.
   const db = await getDb();
-  if (!(await db.tableNames()).includes(TABLE_NAME)) throw new Error('Tabel guidelines belum ada.');
+  if (!(await db.tableNames()).includes(TABLE_NAME)) throw new Error(t('dbNoTable'));
   const table = await db.openTable(TABLE_NAME);
   const columns = (await table.schema()).fields.map(f => f.name);
   const missing = [
@@ -478,7 +485,7 @@ export async function setRuleChecks(id: string, checks: unknown[], checksComplet
   ];
   if (missing.length) await table.addColumns(missing);
   const where = `id = '${id.replace(/'/g, "''")}'`;
-  if (!(await table.countRows(where))) throw new Error(`Rule ${id} tidak ditemukan.`);
+  if (!(await table.countRows(where))) throw new Error(t('ruleNotFound', { id }));
   await table.update({ where, values: { checks: JSON.stringify(checks), checksComplete } });
 }
 
@@ -510,7 +517,7 @@ export async function deleteGuideline(id: string): Promise<boolean> {
   }
 
   const table = await db.openTable(TABLE_NAME);
-  await table.delete(`id = '${id}'`);
+  await table.delete(`id = '${id.replace(/'/g, "''")}'`);
   return true;
 }
 
@@ -636,25 +643,34 @@ export async function searchRelevantGuidelines(
   const rows = await table.query().toArray();
   if (rows.length === 0) return [];
 
-  const corpus = rows.map((r: any) => `${r.title}\n${r.content}`);
-  const { client, config: aiConfig } = await getActiveAIProvider();
-  const embModel = aiConfig.embeddingModel || 'text-embedding-3-small';
+  const toChunk = (row: any): DocChunk => ({ id: row.id, source: row.source, title: row.title, content: row.content });
+  const q = query.slice(0, 4000);
+
+  // Stored TF-IDF vectors come from per-ingest vocabularies and are not comparable across ingests,
+  // so local mode ranks with one index built over the whole corpus at query time.
+  const rankLocally = (): DocChunk[] => {
+    const vectorizer = createTfIdfIndex(rows.map((r: any) => `${r.title}\n${r.content}`));
+    const qv = vectorizer(q);
+    return rows
+      .map((r: any) => ({ r, score: cosineSimilarity(qv, vectorizer(`${r.title}\n${r.content}`)) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(({ r }) => toChunk(r));
+  };
+
+  if (config.provider === '9router' || config.embeddingModel === 'local') return rankLocally();
 
   let queryVector: number[];
-  if (aiConfig.provider === '9router' || embModel === 'local') {
-    const vectorizer = createTfIdfIndex(corpus);
-    queryVector = vectorizer(query.slice(0, 4000));
-  } else {
-    try {
-      const { embedding } = await embed({
-        model: client.embedding(embModel),
-        value: query.slice(0, 4000),
-      });
-      queryVector = embedding;
-    } catch {
-      const vectorizer = createTfIdfIndex(corpus);
-      queryVector = vectorizer(query.slice(0, 4000));
-    }
+  try {
+    const { client, config: aiConfig } = await getActiveAIProvider();
+    const { embedding } = await embed({
+      model: client.embedding(aiConfig.embeddingModel || 'text-embedding-3-small'),
+      value: q,
+    });
+    queryVector = embedding;
+  } catch (err: any) {
+    logError('LocalSearchEmbedding', err, { limit });
+    return rankLocally();
   }
 
   const results = await table
@@ -662,10 +678,5 @@ export async function searchRelevantGuidelines(
     .limit(limit)
     .toArray();
 
-  return results.map((row: any) => ({
-    id: row.id,
-    source: row.source,
-    title: row.title,
-    content: row.content,
-  }));
+  return results.map(toChunk);
 }

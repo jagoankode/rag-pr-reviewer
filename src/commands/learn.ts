@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import path from 'path';
 import { scanFeatureCodeFiles, CodeFileContext } from '../core/code-scanner.js';
-import { MinedConventionsSchema, MinedConventions } from '../core/learn-schema.js';
+import { MinedConventionsSchema, MinedConventions, MinedRule } from '../core/learn-schema.js';
 import { loadConfig } from '../core/config.js';
 import { setActiveAbortController, createProcessAbortController, clearActiveAbortController } from '../core/nav.js';
 import { callLLM } from '../core/llm-client.js';
@@ -10,6 +10,8 @@ import { getDynamicLearnPromptTemplate } from '../core/prompt-manager.js';
 import { insertChunks, InsertResult } from '../core/db.js';
 import { DocChunk } from '../core/chunker.js';
 import { resolveUserPath } from './ingest.js';
+import { t } from '../core/i18n.js';
+import { logError } from '../core/logger.js';
 
 function extractMinedResult(rawText: string): MinedConventions {
   const text = (rawText || '').trim();
@@ -46,28 +48,28 @@ function extractMinedResult(rawText: string): MinedConventions {
     } catch {}
   }
 
-  throw new Error('AI tidak mengembalikan struktur JSON konvensi yang valid.');
+  throw new Error(t('learnInvalidJson'));
 }
 
 export async function learnFeatureCommand(targetPath: string, modelOverride?: string): Promise<boolean> {
   const resolved = resolveUserPath(targetPath);
   const abortController = createProcessAbortController();
-  const spinner = ora(chalk.blue(`Memindai source code di ${resolved}... (Ctrl+C untuk batalkan)`)).start();
+  const spinner = ora(chalk.blue(t('learnScanning', { path: resolved }))).start();
 
   try {
     const files: CodeFileContext[] = await scanFeatureCodeFiles(resolved, 15, 25000);
 
     if (abortController.signal.aborted) {
-      spinner.info(chalk.yellow('\nProses scan dibatalkan.'));
+      spinner.info(chalk.yellow(`\n${t('learnScanCancelled')}`));
       return false;
     }
 
     if (files.length === 0) {
-      spinner.warn(chalk.yellow(`Tidak ditemukan file source code yang didukung di: ${resolved}`));
+      spinner.warn(chalk.yellow(t('learnNoFiles', { path: resolved })));
       return false;
     }
 
-    spinner.text = chalk.cyan(`Membaca ${files.length} file source code untuk analisis hulu-ke-hilir...`);
+    spinner.text = chalk.cyan(t('learnReading', { count: files.length }));
 
     // Gabungkan cuplikan kode terstruktur
     const codeContext = files
@@ -76,44 +78,47 @@ export async function learnFeatureCommand(targetPath: string, modelOverride?: st
 
     const config = await loadConfig();
     const modelName = modelOverride || config.defaultModel || '';
-    if (!modelName) throw new Error('Belum ada model AI aktif. Pilih provider & model via TUI (`lumio` → Model), atau pakai --model.');
+    if (!modelName) throw new Error(t('noModel'));
 
-    spinner.text = chalk.magenta(`Menganalisis pola arsitektur & aturan coding via AI (${modelName})... (Ctrl+C: Batal)`);
+    spinner.text = chalk.magenta(t('learnAnalyzing', { model: modelName }));
 
     const learnTemplate = await getDynamicLearnPromptTemplate();
+    // Function replacers: injected code may contain `$&`, `$'` etc.
     const prompt = learnTemplate
-      .replace('{{FOLDER_NAME}}', path.basename(resolved))
-      .replace('{{CODE_CONTEXT}}', codeContext);
+      .replace('{{FOLDER_NAME}}', () => path.basename(resolved))
+      .replace('{{CODE_CONTEXT}}', () => codeContext);
 
     let rawAIResponse = '';
     try {
       rawAIResponse = await callLLM(prompt, modelName, abortController.signal);
     } catch (callErr: any) {
       if (abortController.signal.aborted || callErr.name === 'AbortError') {
-        spinner.info(chalk.yellow('\nAnalisis AI dibatalkan oleh pengguna.'));
+        spinner.info(chalk.yellow(`\n${t('learnAiCancelled')}`));
         return false;
       }
       throw callErr;
     }
 
     if (abortController.signal.aborted) {
-      spinner.info(chalk.yellow('\nProses dibatalkan oleh pengguna.'));
+      spinner.info(chalk.yellow(`\n${t('cancelledByUser')}`));
       return false;
     }
     const mined = extractMinedResult(rawAIResponse);
 
-    spinner.succeed(chalk.green(`Selesai menganalisis fitur "${mined.featureName}"! Ditemukan ${mined.rules.length} aturan konvensi.\n`));
+    spinner.succeed(chalk.green(`${t('learnDone', { feature: mined.featureName, count: mined.rules.length })}\n`));
 
-    console.log(chalk.bold.cyan('═════════════════ HASIL EKSTRAKSI ARSITEKTUR & ATURAN ═════════════════'));
-    console.log(chalk.yellow(`Fitur   : ${mined.featureName}`));
-    console.log(chalk.gray(`Alur    : ${mined.architectureSummary}\n`));
+    console.log(chalk.bold.cyan(`═════════════════ ${t('learnResultTitle')} ═════════════════`));
+    console.log(chalk.yellow(`${t('learnFeature')}: ${mined.featureName}`));
+    console.log(chalk.gray(`${t('learnFlow')}: ${mined.architectureSummary}\n`));
 
-    console.log(chalk.bold.green(`Daftar Aturan yang Dipelajari (${mined.rules.length}):`));
+    console.log(chalk.bold.green(t('learnRulesTitle', { count: mined.rules.length })));
+    // The AI names the layer itself, so it may be missing.
+    const layerTag = (rule: MinedRule): string => rule.layer?.trim() ? `[${rule.layer.trim().toUpperCase()}] ` : '';
     mined.rules.forEach((rule, idx) => {
-      console.log(`\n  ${chalk.bold.cyan(`${idx + 1}. [${rule.layer.toUpperCase()}] ${rule.title}`)}`);
-      console.log(`     Aturan : ${chalk.white(rule.convention)}`);
+      console.log(`\n  ${chalk.bold.cyan(`${idx + 1}. ${layerTag(rule)}${rule.title}`)}`);
+      console.log(`     ${t('learnRule')}: ${chalk.white(rule.convention)}`);
       if (rule.exampleGood) {
-        console.log(`     Pola   : ${chalk.gray(rule.exampleGood.replace(/\n/g, ' '))}`);
+        console.log(`     ${t('learnPattern')}: ${chalk.gray(rule.exampleGood.replace(/\n/g, ' '))}`);
       }
     });
     console.log(chalk.bold.cyan('\n═══════════════════════════════════════════════════════════════════════\n'));
@@ -122,22 +127,22 @@ export async function learnFeatureCommand(targetPath: string, modelOverride?: st
     const chunks: DocChunk[] = mined.rules.map((rule, idx) => ({
       id: `mined_${path.basename(resolved)}_${idx}_${Date.now()}`,
       source: 'feature-learn',
-      title: `${mined.featureName} > [${rule.layer.toUpperCase()}] ${rule.title}`,
+      title: `${mined.featureName} > ${layerTag(rule)}${rule.title}`,
       content: `${rule.convention}\n\nArchitecture Context:\n${mined.architectureSummary}${
         rule.exampleGood ? `\n\nExample Good Pattern:\n${rule.exampleGood}` : ''
       }`,
     }));
 
-    const saveSpinner = ora(chalk.blue('Menyimpan aturan hasil belajar ke LanceDB (dengan cek anti-duplikat)...')).start();
+    const saveSpinner = ora(chalk.blue(t('learnSaving'))).start();
     const result: InsertResult = await insertChunks(chunks);
 
     if (result.insertedCount === 0 && result.duplicateCount > 0) {
-      saveSpinner.info(chalk.yellow(`Semua (${result.duplicateCount}) aturan yang dipelajari sudah pernah tersimpan sebelumnya.`));
+      saveSpinner.info(chalk.yellow(t('learnAllDuplicate', { count: result.duplicateCount })));
     } else {
       saveSpinner.succeed(
         chalk.green(
-          `Berhasil menambahkan ${result.insertedCount} aturan convention baru ke LanceDB!` +
-            (result.duplicateCount > 0 ? chalk.gray(` (${result.duplicateCount} duplikat dilewati)`) : '')
+          t('learnSaved', { count: result.insertedCount }) +
+            (result.duplicateCount > 0 ? chalk.gray(t('duplicatesSkipped', { count: result.duplicateCount })) : '')
         )
       );
     }
@@ -145,10 +150,11 @@ export async function learnFeatureCommand(targetPath: string, modelOverride?: st
     return true;
   } catch (error: any) {
     if (abortController.signal.aborted || error.name === 'AbortError') {
-      spinner.info(chalk.yellow('\nProses learn feature dibatalkan.'));
+      spinner.info(chalk.yellow(`\n${t('learnCancelled')}`));
       return false;
     }
-    spinner.fail(chalk.red(`Gagal mengekstrak aturan dari code: ${error.message}`));
+    logError('LearnFeature', error, { path: resolved });
+    spinner.fail(chalk.red(t('learnFailed', { message: error.message })));
     return false;
   } finally {
     clearActiveAbortController();

@@ -121,7 +121,8 @@ Lumio adalah **buku contekan kosong**: kode tidak berisi konvensi tim mana pun. 
 Lumio membaca semua rule aktif (paginated, read-only), lalu memeriksa setiap file yang berubah dalam dua lapis:
 
 1. **Checks deterministik (AST TypeScript).** Rule boleh membawa field payload `checks`: daftar primitif
-   generik yang dijalankan engine. Rule tanpa `checks` hanya dinilai AI. Semua yang spesifik tim (glob file,
+   generik yang dijalankan engine. Rule tanpa `checks` hanya dinilai AI, begitu pula file selain
+   JS/TS (`.go`, `.py`, `.java`, dst.) karena parser-nya TypeScript. Semua yang spesifik tim (glob file,
    nama hook, pola nama, tipe terlarang, pesan, severity) adalah data di rule, bukan kode.
 
    ```json

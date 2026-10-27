@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { t } from './i18n.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -51,7 +52,7 @@ export async function getGitDiff(options: GitDiffOptions = {}): Promise<string> 
     });
     return stdout;
   } catch (err: any) {
-    throw new Error(`Gagal mengambil git diff: ${err.message}`);
+    throw new Error(t('gitDiffFailed', { message: err.message }));
   }
 }
 

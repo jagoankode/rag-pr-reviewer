@@ -1,119 +1,35 @@
+import { APP, AppKey } from '../locales/app.js';
+import { OUTPUT, OutputKey } from '../locales/output.js';
+
 export type Language = 'id' | 'en';
 
 /** Language name as written in AI instructions. */
 export const LANGUAGE_NAME: Record<Language, string> = { id: 'Bahasa Indonesia', en: 'English' };
 
-export const translations = {
-  id: {
-    tagline: 'AI Code Review & Knowledge Engine',
-    provider: 'provider',
-    model: 'model',
-    db: 'db',
-    unset: 'belum diset',
-    chooseAction: 'Pilih aksi:',
-    notGitRepoWarn: 'ℹ️  Direktori saat ini bukan git repository. Fitur review cabang git dinonaktifkan.\n',
-    
-    // Menu Utama
-    menuReviewTitle: '🔍 Review Changes',
-    menuReviewDesc: 'Review PR / Git diff dengan aturan tim',
-    menuKnowledgeTitle: '📚 Knowledge Base',
-    menuKnowledgeDesc: 'Tanya jawab, pelajari kode, ingest & kelola aturan',
-    menuModelTitle: '⚡ Ganti Model Cepat',
-    menuModelDesc: 'Switch model & auto-sync provider',
-    menuProviderTitle: '🤖 Configure AI Provider',
-    menuProviderDesc: 'Kelola API Key, Base URL & model profile',
-    menuHistoryTitle: '📜 Review History',
-    menuHistoryDesc: 'Buka atau hapus laporan hasil audit review',
-    menuSettingsTitle: '⚙️ Pengaturan',
-    menuSettingsDesc: 'Status konfigurasi, bahasa & mode database',
-    menuExit: '🚪 Keluar (Exit)',
-    goodbye: 'Sampai jumpa, Bos! 👋\n',
+// Follows config.language; loadConfig() keeps it in sync.
+let current: Language = 'id';
 
-    // Submenu Settings
-    settingsMenuTitle: 'Menu Utama > ⚙️ Pengaturan',
-    settingStatusTitle: '📊 Status Configuration',
-    settingStatusDesc: 'Cek ringkasan konfigurasi & lingkungan',
-    settingLangTitle: '🌐 Language / Bahasa',
-    settingLangDesc: 'Ganti bahasa tampilan (ID / EN)',
-    settingDbTitle: '💾 Database Storage Mode',
-    settingDbDesc: 'Pilih mode Qdrant VPS atau Local LanceDB',
-    settingLogTitle: '📜 System Logs & Tracing',
-    settingLogDesc: 'Lihat catatan error/tracing & bersihkan log',
-    settingBack: '🔙 Kembali ke Menu Utama',
+export function setLanguage(lang?: Language): void {
+  current = lang === 'en' ? 'en' : 'id';
+}
 
-    // Submenu Knowledge Base
-    kbMenuTitle: 'Menu Utama > 📚 Knowledge Base',
-    kbDialogTitle: '💬 Tanya Jawab Aturan (Chat Dialog)',
-    kbDialogDesc: 'Diskusi interaktif & tanya aturan coding internal',
-    kbInspectTitle: '📖 Inspect Active Rules',
-    kbInspectDesc: 'Lihat pasal aturan aktif di Vector DB',
-    kbLearnTitle: '🧠 Learn Feature Code',
-    kbLearnDesc: 'Pelajari konvensi dari folder/route lokal',
-    kbIngestTitle: '📥 Ingest Knowledge Baru',
-    kbIngestDesc: 'Tambah dokumen (.md, .txt, URL) atau form manual',
-    kbBack: '🔙 Kembali ke Menu Utama',
+export function getLanguage(): Language {
+  return current;
+}
 
-    // Language switcher
-    switchLangPrompt: 'Pilih bahasa tampilan (Select display language):',
-    langSwitched: '✔ Bahasa berhasil diubah ke Bahasa Indonesia!',
-    pressEnter: 'Tekan [Enter] untuk kembali ke Menu Utama...',
-  },
-  en: {
-    tagline: 'AI Code Review & Knowledge Engine',
-    provider: 'provider',
-    model: 'model',
-    db: 'db',
-    unset: 'unset',
-    chooseAction: 'Select action:',
-    notGitRepoWarn: 'ℹ️  Current directory is not a git repository. Git review features are disabled.\n',
+type Vars = Record<string, string | number | boolean>;
 
-    // Main Menu
-    menuReviewTitle: '🔍 Review Changes',
-    menuReviewDesc: 'Review PR / Git diff against team rules',
-    menuKnowledgeTitle: '📚 Knowledge Base',
-    menuKnowledgeDesc: 'Chat, learn code, ingest & manage rules',
-    menuModelTitle: '⚡ Quick Switch Model',
-    menuModelDesc: 'Switch active model & auto-sync provider',
-    menuProviderTitle: '🤖 Configure AI Provider',
-    menuProviderDesc: 'Manage API keys, Base URLs & model profiles',
-    menuHistoryTitle: '📜 Review History',
-    menuHistoryDesc: 'Inspect or delete review audit reports',
-    menuSettingsTitle: '⚙️ Settings',
-    menuSettingsDesc: 'Configuration status, language & database mode',
-    menuExit: '🚪 Exit Lumio',
-    goodbye: 'See you next time! 👋\n',
+/** Replaces {name} placeholders that have a value; any other braces are kept as written. */
+function fill(text: string, vars?: Vars): string {
+  return vars ? text.replace(/\{(\w+)\}/g, (match, key) => (key in vars ? String(vars[key]) : match)) : text;
+}
 
-    // Submenu Settings
-    settingsMenuTitle: 'Main Menu > ⚙️ Settings',
-    settingStatusTitle: '📊 Status Configuration',
-    settingStatusDesc: 'Check system config & environment details',
-    settingLangTitle: '🌐 Language / Bahasa',
-    settingLangDesc: 'Change display language (ID / EN)',
-    settingDbTitle: '💾 Database Storage Mode',
-    settingDbDesc: 'Choose Qdrant VPS or Local LanceDB',
-    settingLogTitle: '📜 System Logs & Tracing',
-    settingLogDesc: 'View error/tracing logs & clear log file',
-    settingBack: '🔙 Back to Main Menu',
+/** App label: menus, prompts, spinners, status lines and errors. */
+export function t(key: AppKey, vars?: Vars): string {
+  return fill(APP[current][key], vars);
+}
 
-    // Submenu Knowledge Base
-    kbMenuTitle: 'Main Menu > 📚 Knowledge Base',
-    kbDialogTitle: '💬 Knowledge Dialog (Chat)',
-    kbDialogDesc: 'Discuss & query internal coding conventions',
-    kbInspectTitle: '📖 Inspect Active Rules',
-    kbInspectDesc: 'Inspect team conventions stored in Vector DB',
-    kbLearnTitle: '🧠 Learn Feature Code',
-    kbLearnDesc: 'Learn conventions from local folder/routes',
-    kbIngestTitle: '📥 Ingest New Knowledge',
-    kbIngestDesc: 'Add documents (.md, .txt, URL) or manual entry',
-    kbBack: '🔙 Back to Main Menu',
-
-    // Language switcher
-    switchLangPrompt: 'Select display language (Pilih bahasa tampilan):',
-    langSwitched: '✔ Display language switched to English!',
-    pressEnter: 'Press [Enter] to return to Main Menu...',
-  },
-};
-
-export function getTranslation(lang: Language = 'id') {
-  return translations[lang] || translations.id;
+/** Review output: terminal report, saved markdown report and the summary/notes of a review result. */
+export function out(key: OutputKey, vars?: Vars): string {
+  return fill(OUTPUT[current][key], vars);
 }

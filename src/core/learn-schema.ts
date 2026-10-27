@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const MinedRuleSchema = z.object({
   title: z.string().describe('Short descriptive rule title (e.g. Controller Response Envelope Pattern)'),
-  layer: z.enum(['routing', 'service', 'repository', 'model', 'middleware', 'general']).describe('Layer in the architecture'),
+  layer: z.string().describe('Area of the codebase the rule applies to, as this project names it (e.g. component, hook, route, service, model, test, general)'),
   convention: z.string().describe('Clear convention statement that must be followed in PRs'),
   exampleGood: z.string().nullable().describe('Concrete snippet or explanation from the analyzed code illustrating good pattern'),
 });

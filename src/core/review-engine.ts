@@ -4,6 +4,8 @@ import { ReviewRule, RuleSnapshot } from './review-rules.js';
 import { ReviewInput } from './review-input.js';
 import { fullyCovered, hasChecks, hasParseErrors, isScriptFile, parseSource, runChecks } from './checkers/index.js';
 import { RepoFinding } from './checkers/git.js';
+import { matchAny } from './checkers/glob.js';
+import { out } from './i18n.js';
 
 export type CoverageStatus = 'PASS' | 'FAIL' | 'NOT_APPLICABLE';
 export interface Coverage { ruleId: string; file: string; status: CoverageStatus; reason: string; }
@@ -11,15 +13,9 @@ export interface Finding extends LineViolation { ruleId: string; column: number;
 export interface FileAudit { file: string; violations: Finding[]; coverage: Coverage[]; complete: boolean; skipped?: string; notes?: string[]; }
 export const compareText = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
 
+/** A rule's targetFiles, matched with the same globs as its checks; no targetFiles means every file. */
 export function fileMatchesPattern(file: string, patterns?: string[]): boolean {
-  if (!patterns || !patterns.length || patterns.includes('*')) return true;
-  return patterns.some(p => {
-    const clean = p.replace(/^\*\*\//, '').replace(/^\*\//, '');
-    if (clean.startsWith('*.')) {
-      return file.endsWith(clean.slice(1));
-    }
-    return file.includes(clean);
-  });
+  return !patterns || !patterns.length || matchAny(file, patterns);
 }
 
 function finding(input: ReviewInput, rule: Readonly<ReviewRule>, line: number, column: number, check: string, comment: string, engine: Finding['engine'], severity: Finding['severity'], suggestedFix: string | null = null): Finding {
@@ -74,6 +70,12 @@ export function parseAICoverage(raw: string, input: ReviewInput, snapshot: RuleS
       violations.push(finding(input, rule, v.line, column, 'ai', v.comment.trim(), 'ai', v.severity === 'info' ? 'warning' : v.severity, typeof v.suggestedFix === 'string' ? v.suggestedFix : null));
     }
     const failed = violations.some(v => v.ruleId === rule.id);
+    // A FAIL whose every violation was invalid is unverified, not a PASS.
+    if (e.status === 'FAIL' && !failed) {
+      complete = false;
+      coverage.push({ ruleId: rule.id, file: input.file, status: 'FAIL', reason: 'Reported violations failed validation.' });
+      continue;
+    }
     coverage.push({ ruleId: rule.id, file: input.file, status: failed ? 'FAIL' : e.status === 'NOT_APPLICABLE' ? 'NOT_APPLICABLE' : 'PASS', reason: typeof e.reason === 'string' && e.reason.trim() ? e.reason : 'No reason given.' });
   }
   return { file: input.file, violations: stableFindings(violations), coverage, complete };
@@ -91,7 +93,7 @@ export function coreAudit(input: ReviewInput, snapshot: RuleSnapshot): FileAudit
     return { ruleId: rule.id, file: input.file, status: failed ? 'FAIL' : notApplicable && !hasChecks(rule) ? 'NOT_APPLICABLE' : 'PASS',
       reason: invalid ? 'Input unavailable or syntax invalid; verification skipped.' : failed ? 'Violation found.' : notApplicable ? 'Rule does not target this file.' : hasChecks(rule) ? 'Declared checks found no violation.' : 'Not checked deterministically.' };
   });
-  return { file: input.file, violations, coverage, complete: snapshot.rules.length > 0 && !invalid, notes: input.error ? [input.error] : invalid ? ['Syntax error; file could not be parsed.'] : [] };
+  return { file: input.file, violations, coverage, complete: snapshot.rules.length > 0 && !invalid, notes: input.error ? [input.error] : invalid ? [out('syntaxError')] : [] };
 }
 
 /**
@@ -115,28 +117,35 @@ export async function auditFile(input: ReviewInput, snapshot: RuleSnapshot, ai: 
       return a && c.status !== 'FAIL' ? a : c;
     });
     return { ...core, violations: stableFindings([...core.violations, ...extra]), coverage, complete: advisory.complete,
-      notes: advisory.complete ? core.notes : [...(core.notes || []), 'AI response incomplete for some rules; semantic rules were not fully verified.'] };
+      notes: advisory.complete ? core.notes : [...(core.notes || []), out('aiIncomplete')] };
   } catch (error) {
-    return { ...core, complete: false, notes: [...(core.notes || []), `AI review unavailable: ${(error as Error).message}`] };
+    return { ...core, complete: false, notes: [...(core.notes || []), out('aiUnavailable', { message: (error as Error).message })] };
   }
 }
 
-export function summarizeAudit(audits: FileAudit[], snapshot: RuleSnapshot, repository: RepoFinding[] = []): PRReviewResult {
+// Skip reasons are stable codes from the diff parser; the report shows them in the output language.
+const SKIP_REASONS: Record<string, () => string> = { 'File deleted': () => out('skipDeleted'), 'Binary or metadata-only change': () => out('skipBinary') };
+
+/** `partial`: some inputs were never audited (e.g. the finding limit stopped the run). Skipped files do not block completeness. */
+export function summarizeAudit(audits: FileAudit[], snapshot: RuleSnapshot, repository: RepoFinding[] = [], partial = false): PRReviewResult {
   const violations = stableFindings(audits.flatMap(a => a.violations));
   const reviewed = audits.filter(a => !a.skipped);
-  const complete = reviewed.length > 0 && snapshot.rules.length > 0 && reviewed.every(a => a.complete);
+  const complete = !partial && audits.length > 0 && snapshot.rules.length > 0 && reviewed.every(a => a.complete);
   const errors = violations.filter(v => v.severity === 'error').length + repository.filter(r => r.severity === 'error').length;
   const warnings = violations.length + repository.length - errors;
   const status = errors ? 'REQUEST_CHANGES' : warnings || !complete ? 'COMMENT' : 'APPROVE';
   const filesWithFindings = new Set(violations.map(v => v.file)).size;
-  const summary = !snapshot.rules.length ? 'No active rules in database.'
-    : `${reviewed.length} files reviewed; ${errors} errors and ${warnings} warnings in ${filesWithFindings} files${repository.length ? ` (+${repository.length} branch/commit findings)` : ''}.${complete ? '' : ' Review incomplete: some files were not fully verified.'}`;
+  const summary = !snapshot.rules.length ? out('summaryNoRules') : out('summary', {
+    reviewed: reviewed.length, errors, warnings, files: filesWithFindings,
+    repo: repository.length ? out('summaryRepo', { count: repository.length }) : '',
+    incomplete: complete ? '' : out('summaryIncomplete'),
+  });
   return {
     status, summary, violations, generalFeedback: [], complete, ruleSnapshot: snapshot.hash,
     repository,
-    skippedFiles: audits.filter(a => a.skipped).map(a => ({ file: a.file, reason: a.skipped! })),
+    skippedFiles: audits.filter(a => a.skipped).map(a => ({ file: a.file, reason: SKIP_REASONS[a.skipped!]?.() || a.skipped! })),
     notes: [
-      ...snapshot.rules.flatMap(r => (r.checkErrors || []).map(e => `Rule "${r.title}": invalid ${e}`)),
+      ...snapshot.rules.flatMap(r => (r.checkErrors || []).map(e => out('invalidCheck', { title: r.title, error: e }))),
       ...audits.flatMap(a => (a.notes || []).map(n => `${a.file}: ${n}`)),
     ],
     coverage: audits.flatMap(a => a.coverage).sort((a,b) => compareText(a.file,b.file) || compareText(a.ruleId,b.ruleId)),

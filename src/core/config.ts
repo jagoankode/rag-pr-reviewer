@@ -3,7 +3,7 @@ import path from 'path';
 import os from 'os';
 import { createOpenAI } from '@ai-sdk/openai';
 
-import { Language } from './i18n.js';
+import { Language, setLanguage, t } from './i18n.js';
 
 export type DatabaseType = 'local' | 'qdrant';
 
@@ -129,6 +129,7 @@ export async function loadConfig(includeProject = true): Promise<AppConfig> {
     }
   }
 
+  setLanguage(merged.language);
   return merged;
 }
 
@@ -178,9 +179,7 @@ export async function getActiveAIProvider() {
   const baseURL = resolved.baseUrl || undefined;
 
   if (!apiKey && resolved.providerProfile?.providerType !== 'ollama' && !baseURL) {
-    throw new Error(
-      'API Key belum diset! Silakan konfigurasi via TUI (`lumio` -> "Configure AI Provider") atau set OPENAI_API_KEY di terminal.'
-    );
+    throw new Error(t('apiKeyMissing'));
   }
 
   const client = createOpenAI({

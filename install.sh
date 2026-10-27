@@ -53,7 +53,18 @@ mkdir -p "$BIN_DIR"
 # Download langsung via tarball (100% TANPA butuh git di laptop user)
 TMP_DOWNLOAD=$(mktemp -d)
 TMP_STAGING=$(mktemp -d)
-trap 'rm -rf "$TMP_DOWNLOAD" "$TMP_STAGING"' EXIT INT TERM
+# Sibling dirs of INSTALL_DIR (same filesystem) so the swap is a rename, not a copy.
+NEW_DIR="$LUMIO_DIR/app.new.$$"
+OLD_DIR="$LUMIO_DIR/app.old.$$"
+cleanup() {
+    rm -rf "$TMP_DOWNLOAD" "$TMP_STAGING" "$NEW_DIR"
+    # Interrupted mid-swap: put the previous app back.
+    if [ -d "$OLD_DIR" ] && [ ! -d "$INSTALL_DIR" ]; then
+        mv "$OLD_DIR" "$INSTALL_DIR"
+    fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 curl -fsSL https://github.com/jagoankode/rag-pr-reviewer/archive/refs/heads/main.tar.gz | tar -xz -C "$TMP_DOWNLOAD" --strip-components=1
 
@@ -71,10 +82,17 @@ echo -e "${YELLOW}2. Menginstall runtime dependencies lokal...${NC}"
 )
 
 # Atomic swap: Ganti instalasi lama hanya ketika dependencies sudah 100% terinstall sukses
-rm -rf "$INSTALL_DIR"
-mkdir -p "$INSTALL_DIR"
-cp -r "$TMP_STAGING/"* "$INSTALL_DIR/"
-rm -rf "$TMP_STAGING"
+mkdir -p "$NEW_DIR"
+cp -r "$TMP_STAGING/." "$NEW_DIR/"
+if [ -d "$INSTALL_DIR" ]; then
+    mv "$INSTALL_DIR" "$OLD_DIR"
+fi
+if ! mv "$NEW_DIR" "$INSTALL_DIR"; then
+    echo -e "${RED}Error: Gagal memasang versi baru; versi lama dipulihkan.${NC}"
+    exit 1
+fi
+rm -rf "$OLD_DIR"
+cleanup
 trap - EXIT INT TERM
 
 echo -e "${YELLOW}3. Menyiapkan executable binary 'lumio' di ${BIN_TARGET}...${NC}"

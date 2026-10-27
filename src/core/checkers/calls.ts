@@ -46,7 +46,8 @@ export const forbidImport: Primitive<CheckOf<'forbid-import'>> = ({ source, spec
   for (const statement of source.statements) {
     if (!ts.isImportDeclaration(statement)) continue;
     const from = literalText(statement.moduleSpecifier) || '';
-    if (spec.from && !matchAny(from, spec.from)) continue;
+    // Module specifiers are matched whole: `axios` is not `./lib/axios`.
+    if (spec.from && !matchAny(from, spec.from, false)) continue;
     if (spec.allowTypeOnly !== false && statement.importClause?.isTypeOnly) continue;
     if (!spec.names) {
       out.push({ node: statement, values: { value: from, text: from } });

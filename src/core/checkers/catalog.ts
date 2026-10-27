@@ -25,7 +25,7 @@ Primitives:
 - forbid-call { names, argument? } — calls whose callee matches a glob in names ("fetch", "use*", "console.*"); argument is a
   regex on the first literal argument.
 - forbid-import { from?, names?, allowTypeOnly?, allowOwnTest? } — imports from modules matching from, or named imports
-  matching names. Type-only imports are allowed unless allowTypeOnly is false. allowOwnTest lets "x.test.ts" import from "./x".
+  matching names. from globs match the whole module specifier ("axios" is not "./lib/axios"; use "**/axios" for that). Type-only imports are allowed unless allowTypeOnly is false. allowOwnTest lets "x.test.ts" import from "./x".
 - forbid-directive { directives } / require-directive { directive, ifCalls? } — file directives such as "use client";
   require-directive only fires when the file calls something matching ifCalls (when given).
 - naming { target, pattern?, forbidden?, forbiddenPattern?, stateHooks?, factories?, callees?, properties?, ignoreLoopVariables? }

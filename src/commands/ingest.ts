@@ -6,6 +6,8 @@ import { promises as fs } from 'fs';
 import { scanDocFiles, chunkMarkdown, DocChunk } from '../core/chunker.js';
 import { insertChunks, InsertResult } from '../core/db.js';
 import { createProcessAbortController, clearActiveAbortController } from '../core/nav.js';
+import { t } from '../core/i18n.js';
+import { logError } from '../core/logger.js';
 
 export function resolveUserPath(inputPath: string): string {
   let cleaned = inputPath.trim();
@@ -47,34 +49,34 @@ export async function ingestCommand(targetPath: string): Promise<boolean> {
   const abortController = createProcessAbortController();
 
   if (isUrl) {
-    const spinner = ora(chalk.blue(`Mengambil konten dokumen dari URL: ${trimmed}... (Ctrl+C untuk batalkan)`)).start();
+    const spinner = ora(chalk.blue(t('ingestFetchingUrl', { url: trimmed }))).start();
     try {
       const { title, content } = await fetchUrlContent(trimmed, abortController.signal);
       const chunks = chunkMarkdown(content, trimmed);
 
       if (abortController.signal.aborted) {
-        spinner.info(chalk.yellow('\nProses ingest URL dibatalkan.'));
+        spinner.info(chalk.yellow(`\n${t('ingestUrlCancelled')}`));
         return false;
       }
 
       if (chunks.length === 0) {
-        spinner.warn(chalk.yellow('Konten dari URL kosong atau teks tidak cukup panjang untuk diproses.'));
+        spinner.warn(chalk.yellow(t('ingestUrlEmpty')));
         return false;
       }
 
-      spinner.text = chalk.cyan(`Memeriksa duplikasi & menyimpan chunks baru...`);
+      spinner.text = chalk.cyan(t('ingestSavingChunks'));
       const result: InsertResult = await insertChunks(chunks);
 
       if (result.insertedCount === 0 && result.duplicateCount > 0) {
         spinner.info(
-          chalk.yellow(`Semua (${result.duplicateCount}) aturan dari URL sudah ada di database (ditolak agar tidak duplikat).`)
+          chalk.yellow(t('ingestUrlAllDuplicate', { count: result.duplicateCount }))
         );
       } else {
         spinner.succeed(
           chalk.green(
-            `Berhasil meng-ingest ${result.insertedCount} aturan baru dari URL!` +
+            t('ingestUrlSaved', { count: result.insertedCount }) +
               (result.duplicateCount > 0
-                ? chalk.gray(` (${result.duplicateCount} aturan duplikat ditolak/dilewati)`)
+                ? chalk.gray(t('ingestDuplicatesRejected', { count: result.duplicateCount }))
                 : '')
           )
         );
@@ -82,10 +84,11 @@ export async function ingestCommand(targetPath: string): Promise<boolean> {
       return true;
     } catch (error: any) {
       if (abortController.signal.aborted || error.name === 'AbortError') {
-        spinner.info(chalk.yellow('\nProses ingest URL dibatalkan oleh pengguna.'));
+        spinner.info(chalk.yellow(`\n${t('ingestUrlCancelledByUser')}`));
         return false;
       }
-      spinner.fail(chalk.red(`Gagal meng-ingest dokumen dari URL: ${error.message}`));
+      logError('IngestUrl', error, { url: trimmed });
+      spinner.fail(chalk.red(t('ingestUrlFailed', { message: error.message })));
       return false;
     } finally {
       clearActiveAbortController();
@@ -93,26 +96,26 @@ export async function ingestCommand(targetPath: string): Promise<boolean> {
   }
 
   const resolvedPath = resolveUserPath(targetPath);
-  const spinner = ora(chalk.blue(`Scanning files at: ${resolvedPath}... (Ctrl+C untuk batalkan)`)).start();
+  const spinner = ora(chalk.blue(t('ingestScanning', { path: resolvedPath }))).start();
 
   try {
     const files = await scanDocFiles(resolvedPath);
     if (abortController.signal.aborted) {
-      spinner.info(chalk.yellow('\nProses scanning dokumen dibatalkan.'));
+      spinner.info(chalk.yellow(`\n${t('ingestScanCancelled')}`));
       return false;
     }
 
     if (files.length === 0) {
-      spinner.warn(chalk.yellow(`Tidak ditemukan file dokumen (.md, .txt) di: ${resolvedPath}`));
+      spinner.warn(chalk.yellow(t('ingestNoFiles', { path: resolvedPath })));
       return false;
     }
 
-    spinner.text = chalk.blue(`Membaca dan memotong dokumen dari ${files.length} file...`);
+    spinner.text = chalk.blue(t('ingestReading', { count: files.length }));
 
     let allChunks: DocChunk[] = [];
     for (const file of files) {
       if (abortController.signal.aborted) {
-        spinner.info(chalk.yellow('\nProses membaca dokumen dibatalkan.'));
+        spinner.info(chalk.yellow(`\n${t('ingestReadCancelled')}`));
         return false;
       }
       const content = await fs.readFile(file, 'utf-8');
@@ -121,23 +124,23 @@ export async function ingestCommand(targetPath: string): Promise<boolean> {
     }
 
     if (allChunks.length === 0) {
-      spinner.warn(chalk.yellow('File kosong atau teks tidak cukup panjang untuk di-chunk.'));
+      spinner.warn(chalk.yellow(t('ingestEmpty')));
       return false;
     }
 
-    spinner.text = chalk.cyan(`Memeriksa duplikasi & menyimpan chunks baru...`);
+    spinner.text = chalk.cyan(t('ingestSavingChunks'));
     const result: InsertResult = await insertChunks(allChunks);
 
     if (result.insertedCount === 0 && result.duplicateCount > 0) {
       spinner.info(
-        chalk.yellow(`Semua (${result.duplicateCount}) aturan sudah ada di database (ditolak agar tidak duplikat).`)
+        chalk.yellow(t('ingestAllDuplicate', { count: result.duplicateCount }))
       );
     } else {
       spinner.succeed(
         chalk.green(
-          `Berhasil menyimpan ${result.insertedCount} aturan baru!` +
+          t('ingestSaved', { count: result.insertedCount }) +
             (result.duplicateCount > 0
-              ? chalk.gray(` (${result.duplicateCount} aturan duplikat ditolak/dilewati)`)
+              ? chalk.gray(t('ingestDuplicatesRejected', { count: result.duplicateCount }))
               : '')
         )
       );
@@ -145,10 +148,11 @@ export async function ingestCommand(targetPath: string): Promise<boolean> {
     return true;
   } catch (error: any) {
     if (abortController.signal.aborted || error.name === 'AbortError') {
-      spinner.info(chalk.yellow('\nProses ingest dibatalkan oleh pengguna.'));
+      spinner.info(chalk.yellow(`\n${t('ingestCancelledByUser')}`));
       return false;
     }
-    spinner.fail(chalk.red(`Gagal meng-ingest dokumen: ${error.message}`));
+    logError('IngestFiles', error, { path: resolvedPath });
+    spinner.fail(chalk.red(t('ingestFailed', { message: error.message })));
     return false;
   } finally {
     clearActiveAbortController();
@@ -159,7 +163,7 @@ export async function ingestCommand(targetPath: string): Promise<boolean> {
  * Ingest aturan langsung lewat percakapan/input teks bebas
  */
 export async function ingestDirectRuleCommand(title: string, content: string): Promise<boolean> {
-  const spinner = ora(chalk.blue('Memeriksa duplikasi & menyimpan aturan baru ke LanceDB...')).start();
+  const spinner = ora(chalk.blue(t('ingestRuleSaving'))).start();
 
   try {
     const chunk: DocChunk = {
@@ -172,13 +176,14 @@ export async function ingestDirectRuleCommand(title: string, content: string): P
     const result = await insertChunks([chunk]);
 
     if (result.insertedCount === 0) {
-      spinner.info(chalk.yellow(`Aturan serupa sudah tersimpan sebelumnya (ditolak agar tidak duplikat).`));
+      spinner.info(chalk.yellow(t('ingestRuleDuplicate')));
     } else {
-      spinner.succeed(chalk.green(`Aturan "${title}" berhasil disimpan ke knowledge RAG!`));
+      spinner.succeed(chalk.green(t('ingestRuleSaved', { title })));
     }
     return true;
   } catch (error: any) {
-    spinner.fail(chalk.red(`Gagal menyimpan aturan: ${error.message}`));
+    logError('IngestRule', error, { title });
+    spinner.fail(chalk.red(t('ingestRuleFailed', { message: error.message })));
     return false;
   }
 }

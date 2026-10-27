@@ -8,8 +8,8 @@ import { inspectGuidelinesCommand } from './guidelines.js';
 import { learnFeatureCommand } from './learn.js';
 import { runInteractiveKnowledgeDialog } from './dialog.js';
 import { isGitRepo, getAvailableBranches, getCurrentBranch } from '../core/git.js';
-import { loadConfig, saveConfig, AppConfig, DatabaseType, ProviderProfile, resolveProviderForModel } from '../core/config.js';
-import { Language, getTranslation } from '../core/i18n.js';
+import { loadConfig, AppConfig, DatabaseType, ProviderProfile, resolveProviderForModel } from '../core/config.js';
+import { Language, setLanguage, t } from '../core/i18n.js';
 import { listSavedReports, resolveReportDir, deleteReportFile, clearAllReports } from '../core/history.js';
 import { getAppVersion } from '../core/version.js';
 import { readRecentLogs, clearAllLogs, getLogFilePath, logError } from '../core/logger.js';
@@ -34,13 +34,12 @@ function renderOpenCodeHeader(config: AppConfig, inRepo: boolean, currentBranch:
   const version = getAppVersion();
   const resolved = resolveProviderForModel(config);
   const lang = config.language || 'id';
-  const t = getTranslation(lang);
 
   const termW = Math.max(60, Math.min(100, process.stdout.columns || 80));
 
   // 1. Sleek Brand Header
   const brand = `${chalk.bold.hex('#F59E0B')('✨ Lumio')} ${chalk.gray(`v${version}`)}`;
-  const tagline = chalk.gray(t.tagline);
+  const tagline = chalk.gray(t('tagline'));
   const gitBadge = inRepo
     ? chalk.cyan(`git:(${chalk.bold.green(currentBranch)})`)
     : chalk.gray('git:(offline)');
@@ -50,19 +49,19 @@ function renderOpenCodeHeader(config: AppConfig, inRepo: boolean, currentBranch:
 
   // 2. Minimalist Status Chip Line (OpenCode Style)
   const provChip = resolved.providerId
-    ? `${chalk.gray(`${t.provider}:`)} ${chalk.bold.yellow(resolved.providerId)}`
-    : `${chalk.gray(`${t.provider}:`)} ${chalk.red(t.unset)}`;
+    ? `${chalk.gray(`${t('provider')}:`)} ${chalk.bold.yellow(resolved.providerId)}`
+    : `${chalk.gray(`${t('provider')}:`)} ${chalk.red(t('unset'))}`;
 
   const modelChip = config.defaultModel
-    ? `${chalk.gray(`${t.model}:`)} ${chalk.bold.cyan(config.defaultModel)}`
-    : `${chalk.gray(`${t.model}:`)} ${chalk.yellow(t.unset)}`;
+    ? `${chalk.gray(`${t('model')}:`)} ${chalk.bold.cyan(config.defaultModel)}`
+    : `${chalk.gray(`${t('model')}:`)} ${chalk.yellow(t('unset'))}`;
 
   const dbChip =
     config.dbType === 'qdrant'
       ? config.qdrantUrl && config.qdrantCollection
-        ? `${chalk.gray(`${t.db}:`)} ${chalk.green(`qdrant[${config.qdrantCollection}]`)}`
-        : `${chalk.gray(`${t.db}:`)} ${chalk.yellow('qdrant[unconfigured]')}`
-      : `${chalk.gray(`${t.db}:`)} ${chalk.blue('lancedb[local]')}`;
+        ? `${chalk.gray(`${t('db')}:`)} ${chalk.green(`qdrant[${config.qdrantCollection}]`)}`
+        : `${chalk.gray(`${t('db')}:`)} ${chalk.yellow('qdrant[unconfigured]')}`
+      : `${chalk.gray(`${t('db')}:`)} ${chalk.blue('lancedb[local]')}`;
 
   const langChip = `${chalk.gray('lang:')} ${chalk.bold.magenta(lang.toUpperCase())}`;
 
@@ -83,52 +82,51 @@ export async function runInteractiveTUI() {
     const currentBranch = inRepo ? await getCurrentBranch() : 'no-git';
     const config = await loadConfig();
     const lang = config.language || 'id';
-    const t = getTranslation(lang);
 
     renderOpenCodeHeader(config, inRepo, currentBranch);
 
     if (!inRepo) {
-      console.log(chalk.yellow(t.notGitRepoWarn));
+      console.log(chalk.yellow(t('notGitRepoWarn')));
     }
 
     const mainChoice = await select({
       isRootMenu: true,
-      message: t.chooseAction,
+      message: t('chooseAction'),
       choices: [
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.menuReviewTitle, 26))} ${chalk.gray(t.menuReviewDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('menuReviewTitle'), 26))} ${chalk.gray(t('menuReviewDesc'))}`,
           value: 'review',
-          disabled: !inRepo ? '(Bukan git repo)' : false,
+          disabled: !inRepo ? t('notGitRepoBadge') : false,
         },
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.menuKnowledgeTitle, 26))} ${chalk.gray(t.menuKnowledgeDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('menuKnowledgeTitle'), 26))} ${chalk.gray(t('menuKnowledgeDesc'))}`,
           value: 'knowledge_base',
         },
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.menuModelTitle, 26))} ${chalk.gray(t.menuModelDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('menuModelTitle'), 26))} ${chalk.gray(t('menuModelDesc'))}`,
           value: 'quick_switch_model',
         },
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.menuProviderTitle, 26))} ${chalk.gray(t.menuProviderDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('menuProviderTitle'), 26))} ${chalk.gray(t('menuProviderDesc'))}`,
           value: 'config_ai',
         },
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.menuHistoryTitle, 26))} ${chalk.gray(t.menuHistoryDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('menuHistoryTitle'), 26))} ${chalk.gray(t('menuHistoryDesc'))}`,
           value: 'history',
         },
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.menuSettingsTitle, 26))} ${chalk.gray(t.menuSettingsDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('menuSettingsTitle'), 26))} ${chalk.gray(t('menuSettingsDesc'))}`,
           value: 'settings',
         },
         {
-          name: chalk.red(t.menuExit),
+          name: chalk.red(t('menuExit')),
           value: 'exit',
         },
       ],
     });
 
     if (mainChoice === 'exit') {
-      console.log(chalk.gray(`\n${t.goodbye}`));
+      console.log(chalk.gray(`\n${t('goodbye')}`));
       process.exit(0);
     }
 
@@ -152,26 +150,25 @@ async function settingsMenuUI(config: AppConfig, inRepo: boolean) {
   while (true) {
     const freshConfig = await loadConfig();
     const lang = freshConfig.language || 'id';
-    const t = getTranslation(lang);
-    printHeader(t.settingsMenuTitle);
+    printHeader(t('settingsMenuTitle'));
 
     const settingChoice = await select({
-      message: t.chooseAction,
+      message: t('chooseAction'),
       choices: [
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.settingStatusTitle, 32))} ${chalk.gray(t.settingStatusDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('settingStatusTitle'), 32))} ${chalk.gray(t('settingStatusDesc'))}`,
           value: 'status',
         },
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.settingLangTitle, 32))} ${chalk.gray(t.settingLangDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('settingLangTitle'), 32))} ${chalk.gray(t('settingLangDesc'))}`,
           value: 'language',
         },
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.settingDbTitle, 32))} ${chalk.gray(t.settingDbDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('settingDbTitle'), 32))} ${chalk.gray(t('settingDbDesc'))}`,
           value: 'database',
         },
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.settingLogTitle, 32))} ${chalk.gray(t.settingLogDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('settingLogTitle'), 32))} ${chalk.gray(t('settingLogDesc'))}`,
           value: 'logs',
         },
       ],
@@ -186,7 +183,8 @@ async function settingsMenuUI(config: AppConfig, inRepo: boolean) {
     } else if (settingChoice === 'language') {
       await switchLanguageUI(freshConfig);
     } else if (settingChoice === 'database') {
-      await configureDatabaseUI(freshConfig);
+      // The form edits the global config, so it starts from the global values, not project overrides.
+      await configureDatabaseUI(await loadConfig(false));
     } else if (settingChoice === 'logs') {
       await viewLogsUI();
     }
@@ -196,26 +194,25 @@ async function settingsMenuUI(config: AppConfig, inRepo: boolean) {
 async function knowledgeBaseMenuUI(config: AppConfig) {
   while (true) {
     const lang = config.language || 'id';
-    const t = getTranslation(lang);
-    printHeader(t.kbMenuTitle);
+    printHeader(t('kbMenuTitle'));
 
     const kbChoice = await select({
-      message: t.chooseAction,
+      message: t('chooseAction'),
       choices: [
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.kbDialogTitle, 38))} ${chalk.gray(t.kbDialogDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('kbDialogTitle'), 38))} ${chalk.gray(t('kbDialogDesc'))}`,
           value: 'dialog',
         },
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.kbInspectTitle, 38))} ${chalk.gray(t.kbInspectDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('kbInspectTitle'), 38))} ${chalk.gray(t('kbInspectDesc'))}`,
           value: 'inspect_rules',
         },
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.kbLearnTitle, 38))} ${chalk.gray(t.kbLearnDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('kbLearnTitle'), 38))} ${chalk.gray(t('kbLearnDesc'))}`,
           value: 'learn_code',
         },
         {
-          name: `${chalk.bold.cyan(padAnsiEnd(t.kbIngestTitle, 38))} ${chalk.gray(t.kbIngestDesc)}`,
+          name: `${chalk.bold.cyan(padAnsiEnd(t('kbIngestTitle'), 38))} ${chalk.gray(t('kbIngestDesc'))}`,
           value: 'ingest',
         },
       ],
@@ -238,18 +235,18 @@ async function knowledgeBaseMenuUI(config: AppConfig) {
 }
 
 async function switchLanguageUI(currentConfig: AppConfig) {
-  printHeader('Menu Utama > 🌐 Language / Bahasa');
+  printHeader(t('langMenuTitle'));
   const currentLang = currentConfig.language || 'id';
 
   const chosenLang = await select<Language | 'back'>({
-    message: 'Pilih bahasa tampilan (Select display language):',
+    message: t('switchLangPrompt'),
     choices: [
       {
-        name: currentLang === 'id' ? '🇮🇩 Bahasa Indonesia (Aktif)' : '🇮🇩 Bahasa Indonesia',
+        name: `🇮🇩 Bahasa Indonesia${currentLang === 'id' ? ` (${t('active')})` : ''}`,
         value: 'id',
       },
       {
-        name: currentLang === 'en' ? '🇬🇧 English (Active)' : '🇬🇧 English',
+        name: `🇬🇧 English${currentLang === 'en' ? ` (${t('active')})` : ''}`,
         value: 'en',
       },
     ],
@@ -257,13 +254,9 @@ async function switchLanguageUI(currentConfig: AppConfig) {
 
   if (chosenLang === 'back') return;
 
-  const updatedConfig: AppConfig = {
-    ...currentConfig,
-    language: chosenLang,
-  };
-  await saveConfig(updatedConfig);
-  const t = getTranslation(chosenLang);
-  console.log(chalk.green(`\n${t.langSwitched}\n`));
+  await updateProviderState(latest => ({ ...latest, language: chosenLang }));
+  setLanguage(chosenLang);
+  console.log(chalk.green(`\n${t('langSwitched')}\n`));
   await waitBackPrompt();
 }
 
@@ -273,20 +266,20 @@ async function configureDatabaseUI(currentConfig: AppConfig) {
   let qdrantApiKey = currentConfig.qdrantApiKey || '';
   let qdrantCollection = currentConfig.qdrantCollection || '';
 
-  printHeader('Menu Utama > 💾 Database Storage Mode');
+  printHeader(t('dbMenuTitle'));
 
   const chosenMode = await select<DatabaseType | 'back'>({
-    message: 'Pilih lokasi Vector Database untuk Knowledge Base tim:',
+    message: t('dbChoose'),
     choices: [
       {
         name: '🌐 Remote VPS Qdrant (Shared Team Knowledge)',
         value: 'qdrant',
-        description: 'Menyimpan & menarik aturan dari server Qdrant VPS (Single Source of Truth tim)',
+        description: t('dbQdrantDesc'),
       },
       {
         name: '💻 Local LanceDB (Personal / Offline Mode)',
         value: 'local',
-        description: 'Menyimpan & menarik aturan secara lokal di disk laptop (~/.lumio/db)',
+        description: t('dbLocalDesc'),
       },
     ],
   });
@@ -295,90 +288,92 @@ async function configureDatabaseUI(currentConfig: AppConfig) {
   selectedMode = chosenMode;
 
   if (selectedMode === 'qdrant') {
+    // Escape (or typing back) returns 'back': abort the form without saving.
     let inputUrl = await input({
       message: 'Qdrant VPS Server URL:',
       default: qdrantUrl,
-      validate: (v) => (v.trim().length > 0 ? true : 'URL tidak boleh kosong'),
+      validate: (v) => (v.trim().length > 0 ? true : t('dbUrlEmpty')),
     });
+    if (inputUrl === 'back') return;
     inputUrl = inputUrl.trim();
     if (!inputUrl.startsWith('http://') && !inputUrl.startsWith('https://')) {
       inputUrl = `https://${inputUrl}`;
     }
     qdrantUrl = inputUrl;
 
-    qdrantCollection = await input({
-      message: 'Nama Collection di Qdrant:',
+    const enteredCollection = await input({
+      message: t('dbCollectionPrompt'),
       default: qdrantCollection,
-      validate: (v) => (v.trim().length > 0 ? true : 'Collection tidak boleh kosong'),
+      validate: (v) => (v.trim().length > 0 ? true : t('dbCollectionEmpty')),
     });
+    if (enteredCollection === 'back') return;
+    qdrantCollection = enteredCollection.trim();
 
     const enteredKey = await password({
-      message: 'Qdrant API Key (tekan Enter jika tanpa autentikasi):',
+      message: t('dbKeyPrompt'),
       mask: '*',
     });
-    if (enteredKey && enteredKey !== 'back') {
+    if (enteredKey === 'back') return;
+    if (enteredKey) {
       qdrantApiKey = enteredKey;
     }
   }
 
   // REVIEW & EDIT CONFIRMATION LOOP UNTUK DATABASE
   while (true) {
-    printHeader('Menu Utama > 💾 Database Storage Mode > Konfirmasi');
+    printHeader(t('dbConfirmTitle'));
 
-    console.log(chalk.cyan('─── Ringkasan Konfigurasi Vector Database ───'));
-    console.log(`1. Mode Storage : ${selectedMode === 'qdrant' ? chalk.bold.green('🌐 Remote VPS Qdrant') : chalk.bold.blue('💻 Local LanceDB')}`);
+    console.log(chalk.cyan(t('dbSummary')));
+    console.log(`1. ${t('dbModeLabel')} : ${selectedMode === 'qdrant' ? chalk.bold.green('🌐 Remote VPS Qdrant') : chalk.bold.blue('💻 Local LanceDB')}`);
     if (selectedMode === 'qdrant') {
       console.log(`2. Server URL   : ${chalk.yellow(qdrantUrl)}`);
       console.log(`3. Collection   : ${chalk.cyan(qdrantCollection)}`);
-      console.log(`4. API Key      : ${qdrantApiKey ? chalk.green('Configured (***)') : chalk.gray('(Tanpa Key)')}`);
+      console.log(`4. API Key      : ${qdrantApiKey ? chalk.green('Configured (***)') : chalk.gray(t('dbNoKey'))}`);
     } else {
       console.log(`2. Path Disk    : ${chalk.yellow('~/.lumio/db')}`);
     }
     console.log(chalk.cyan('─────────────────────────────────────────────\n'));
 
     const dbConfirm = await select({
-      message: 'Apakah konfigurasi database sudah benar?',
+      message: t('dbConfirmPrompt'),
       choices: [
-        { name: '✅ Ya, Simpan & Terapkan', value: 'save' },
-        ...(selectedMode === 'qdrant' ? [{ name: '✏️  Koreksi URL / Collection / Key (Edit Typo)', value: 'edit' }] : []),
+        { name: t('dbSave'), value: 'save' },
+        ...(selectedMode === 'qdrant' ? [{ name: t('dbEdit'), value: 'edit' }] : []),
       ],
     });
 
     if (dbConfirm === 'cancel' || dbConfirm === 'back') {
-      console.log(chalk.gray('\nPengaturan database dibatalkan.\n'));
+      console.log(chalk.gray(`\n${t('dbCancelled')}\n`));
       await waitBackPrompt();
       return;
     }
 
     if (dbConfirm === 'save') {
-      const updatedConfig: AppConfig = {
-        ...currentConfig,
-        dbType: selectedMode,
-        qdrantUrl,
-        qdrantApiKey,
-        qdrantCollection,
-      };
-
-      await saveConfig(updatedConfig);
-      console.log(chalk.green(`\n✔ Database storage mode berhasil dialihkan ke: ${selectedMode === 'qdrant' ? '🌐 VPS Qdrant' : '💻 Local LanceDB'}\n`));
+      const mode = selectedMode;
+      await updateProviderState(latest => ({
+        ...latest,
+        dbType: mode,
+        ...(mode === 'qdrant' ? { qdrantUrl, qdrantApiKey, qdrantCollection } : {}),
+      }));
+      console.log(chalk.green(`\n${t('dbSaved', { mode: selectedMode === 'qdrant' ? '🌐 VPS Qdrant' : '💻 Local LanceDB' })}\n`));
       await waitBackPrompt();
       return;
     }
 
     if (dbConfirm === 'edit') {
       const field = await select({
-        message: 'Pilih parameter Qdrant yang ingin dikoreksi:',
+        message: t('dbEditPrompt'),
         choices: [
           { name: `🌐 Server URL [${qdrantUrl}]`, value: 'url' },
           { name: `📂 Collection Name [${qdrantCollection}]`, value: 'collection' },
           { name: `🔑 API Key`, value: 'key' },
-          { name: '🔙 Selesai Edit', value: 'back' },
+          { name: t('dbEditDone'), value: 'back' },
         ],
       });
 
       if (field === 'url') {
         let inputUrl = await input({
-          message: 'Koreksi Qdrant URL:',
+          message: t('dbEditUrl'),
           default: qdrantUrl,
         });
         inputUrl = inputUrl.trim();
@@ -390,13 +385,13 @@ async function configureDatabaseUI(currentConfig: AppConfig) {
         }
       } else if (field === 'collection') {
         const val = await input({
-          message: 'Koreksi Nama Collection:',
+          message: t('dbEditCollection'),
           default: qdrantCollection,
         });
         if (val && val !== 'back') qdrantCollection = val.trim();
       } else if (field === 'key') {
         const val = await password({
-          message: 'Masukkan API Key baru (atau Enter untuk kosong):',
+          message: t('dbEditKey'),
           mask: '*',
         });
         if (val !== 'back') qdrantApiKey = val.trim();
@@ -406,22 +401,22 @@ async function configureDatabaseUI(currentConfig: AppConfig) {
 }
 
 async function reviewWorkflowUI(config: AppConfig) {
-  printHeader('Menu Utama > 🔍 Review Git');
+  printHeader(t('reviewMenuTitle'));
   const currentBranch = await getCurrentBranch();
 
   const diffType = await select({
-    message: 'Pilih mode review git yang diinginkan:',
+    message: t('reviewModePrompt'),
     choices: [
       {
-        name: `🔀 PR Branch Review (Bandingkan 2 Branch: Source ⟵ Target)`,
+        name: t('reviewModePr'),
         value: 'pr_branches',
       },
       {
-        name: '📝 Uncommitted changes (Semua perubahan lokal yang belum di-commit)',
+        name: t('reviewModeUncommitted'),
         value: 'uncommitted',
       },
       {
-        name: '📦 Staged changes only (Perubahan yang sudah di git add)',
+        name: t('reviewModeStaged'),
         value: 'staged',
       },
     ],
@@ -435,10 +430,10 @@ async function reviewWorkflowUI(config: AppConfig) {
 
   if (diffType === 'pr_branches') {
     const fetchChoice = await select({
-      message: 'Fetch branch remote terbaru dari origin (git fetch --all)?',
+      message: t('reviewFetchPrompt'),
       choices: [
-        { name: '✅ Ya, fetch remote terbaru sekarang', value: 'yes' },
-        { name: '⏩ Lewati fetch (gunakan cache branch lokal saat ini)', value: 'no' },
+        { name: t('reviewFetchYes'), value: 'yes' },
+        { name: t('reviewFetchNo'), value: 'no' },
       ],
     });
 
@@ -451,7 +446,7 @@ async function reviewWorkflowUI(config: AppConfig) {
     // 1. Tanyakan Source/Feature Branch terlebih dahulu
     const defaultSource = currentBranch !== 'HEAD' ? currentBranch : allBranches[0] || 'HEAD';
     const rawSource = await input({
-      message: 'Source/Feature Branch (cabang yang mau direview):',
+      message: t('reviewSourcePrompt'),
       default: defaultSource,
     });
     if (rawSource.trim().toLowerCase() === 'b' || rawSource.trim().toLowerCase() === 'back') return;
@@ -459,8 +454,8 @@ async function reviewWorkflowUI(config: AppConfig) {
 
     // 2. Kemudian tanyakan Target/Base Branch pembanding (tanpa default)
     const rawTarget = await input({
-      message: 'Target/Base Branch (cabang pembanding / tujuan PR):',
-      validate: (val) => (val.trim().length > 0 ? true : 'Target branch tidak boleh kosong'),
+      message: t('reviewTargetPrompt'),
+      validate: (val) => (val.trim().length > 0 ? true : t('reviewTargetEmpty')),
     });
     if (rawTarget.trim().toLowerCase() === 'b' || rawTarget.trim().toLowerCase() === 'back') return;
     targetBranch = rawTarget.trim();
@@ -471,14 +466,14 @@ async function reviewWorkflowUI(config: AppConfig) {
 
   // Opsi Scope Review: Full file vs Diff changes only (Default: Full file)
   const scopeChoice = await select<'full' | 'diff' | 'back'>({
-    message: 'Pilih cakupan analisis review (Review Scope):',
+    message: t('reviewScopePrompt'),
     choices: [
       {
-        name: '📄 Full File (Default: Audit 1 file utuh yang terdampak perubahan)',
+        name: t('reviewScopeFull'),
         value: 'full',
       },
       {
-        name: '✂️  Diff Only (Hanya audit baris kode baru yang diubah/ditambah)',
+        name: t('reviewScopeDiff'),
         value: 'diff',
       },
     ],
@@ -488,23 +483,23 @@ async function reviewWorkflowUI(config: AppConfig) {
   const reviewScope = scopeChoice === 'diff' ? 'diff' : 'full';
 
   if (!selectedModel) {
-    console.log(chalk.yellow('\n⚠️  Belum ada model AI yang dipilih/aktif!'));
+    console.log(chalk.yellow(`\n${t('reviewNoModelSelected')}`));
     selectedModel = await input({
-      message: 'Masukkan nama model AI untuk review (nama model dari provider Anda, mis. gpt-4o):',
-      validate: (v) => (v.trim().length > 0 ? true : 'Model tidak boleh kosong'),
+      message: t('reviewModelPrompt'),
+      validate: (v) => (v.trim().length > 0 ? true : t('modelEmpty')),
     });
     selectedModel = selectedModel.trim();
   }
 
   const maxViolationsInput = await input({
-    message: 'Batas maksimal temuan sebelum generate report (kosongkan / tekan enter untuk tanpa batas):',
+    message: t('reviewMaxPrompt'),
   });
   let maxViolations: number | undefined;
   if (maxViolationsInput && maxViolationsInput !== 'back' && !isNaN(parseInt(maxViolationsInput, 10))) {
     maxViolations = parseInt(maxViolationsInput, 10);
   }
 
-  const limitDesc = maxViolations ? `Max Violations: ${chalk.yellow(maxViolations)}` : 'Max Violations: Unlimited';
+  const limitDesc = maxViolations ? `Max Violations: ${chalk.yellow(maxViolations)}` : `Max Violations: ${t('unlimited')}`;
   console.log(chalk.gray(`\nℹ️  Model: ${chalk.cyan(selectedModel)} | Scope: ${chalk.cyan(reviewScope.toUpperCase())} | ${limitDesc} | Output: ${chalk.cyan(outputDir)}\n`));
   await reviewCommand({
     staged: diffType === 'staged',
@@ -522,11 +517,11 @@ async function reviewWorkflowUI(config: AppConfig) {
 }
 
 async function learnWorkflowUI(config: AppConfig) {
-  printHeader('Menu Utama > 🧠 Learn Code');
-  console.log(chalk.gray('AI akan membedah source code lokal dari hulu ke hilir untuk mempelajari pola arsitektur.\n'));
+  printHeader(t('learnMenuTitle'));
+  console.log(chalk.gray(`${t('learnIntro')}\n`));
 
   const folderPath = await input({
-    message: 'Masukkan path folder/route lokal:',
+    message: t('learnPathPrompt'),
     default: './src',
   });
 
@@ -538,17 +533,17 @@ async function learnWorkflowUI(config: AppConfig) {
 }
 
 async function ingestWorkflowUI() {
-  printHeader('Menu Utama > 📚 Ingest Knowledge');
+  printHeader(t('ingestMenuTitle'));
 
   const ingestType = await select({
-    message: 'Pilih metode memasukkan pengetahuan:',
+    message: t('ingestMethodPrompt'),
     choices: [
       {
-        name: '📁 Dari File / Folder Dokumen / Web URL (.md, .txt, http/https)',
+        name: t('ingestFromFile'),
         value: 'file',
       },
       {
-        name: '💬 Input Form Aturan Baru (Judul + Isi Text)',
+        name: t('ingestFromForm'),
         value: 'interactive',
       },
     ],
@@ -558,7 +553,7 @@ async function ingestWorkflowUI() {
 
   if (ingestType === 'file') {
     const docPath = await input({
-      message: 'Masukkan path file/folder dokumen atau Web URL:',
+      message: t('ingestPathPrompt'),
       default: './docs',
     });
 
@@ -568,12 +563,12 @@ async function ingestWorkflowUI() {
     await ingestCommand(docPath.trim());
   } else if (ingestType === 'interactive') {
     const title = await input({
-      message: 'Judul aturan / pengetahuan:',
+      message: t('ingestTitlePrompt'),
     });
     if (!title.trim() || title.trim().toLowerCase() === 'b' || title.trim().toLowerCase() === 'back') return;
 
     const content = await input({
-      message: 'Isi aturan atau instruksi convention:',
+      message: t('ingestContentPrompt'),
     });
     if (!content.trim() || content.trim().toLowerCase() === 'b' || content.trim().toLowerCase() === 'back') return;
 
@@ -585,10 +580,10 @@ async function ingestWorkflowUI() {
 }
 
 async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
-  printHeader('Menu Utama > 📜 Review History');
+  printHeader(t('historyMenuTitle'));
 
   const customDir = await input({
-    message: 'Folder laporan markdown yang ingin dikelola:',
+    message: t('historyDirPrompt'),
     default: defaultDir,
   });
 
@@ -598,7 +593,7 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
   const reports = await listSavedReports(resolved);
 
   if (reports.length === 0) {
-    console.log(chalk.yellow(`\nBelum ada history review yang tersimpan di ${resolved}\n`));
+    console.log(chalk.yellow(`\n${t('historyEmpty', { dir: resolved })}\n`));
     await waitBackPrompt();
     return;
   }
@@ -606,7 +601,7 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
   while (true) {
     const refreshedReports = await listSavedReports(resolved);
     if (refreshedReports.length === 0) {
-      console.log(chalk.yellow(`\nSemua laporan di ${resolved} sudah kosong.\n`));
+      console.log(chalk.yellow(`\n${t('historyAllGone', { dir: resolved })}\n`));
       await waitBackPrompt();
       return;
     }
@@ -616,10 +611,10 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
       value: r.fullPath,
     }));
 
-    choices.push({ name: chalk.red('🗑️  Hapus SEMUA report di folder ini'), value: 'clear_all' });
+    choices.push({ name: chalk.red(t('historyClearAll')), value: 'clear_all' });
 
     const chosenAction = await select({
-      message: `Pilih laporan review di ${chalk.yellow(resolved)}:`,
+      message: t('historyPick', { dir: chalk.yellow(resolved) }),
       choices,
     });
 
@@ -627,22 +622,22 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
 
     if (chosenAction === 'clear_all') {
       const sure = await confirm({
-        message: `Yakin ingin menghapus seluruh (${refreshedReports.length}) file report di ${resolved}?`,
+        message: t('historyClearConfirm', { count: refreshedReports.length, dir: resolved }),
         default: false,
       });
       if (sure) {
         const deletedCount = await clearAllReports(resolved);
-        console.log(chalk.green(`\n✔ Berhasil menghapus ${deletedCount} file report markdown.\n`));
+        console.log(chalk.green(`\n${t('historyCleared', { count: deletedCount })}\n`));
       }
       return;
     }
 
     const fileAction = await select({
-      message: `Aksi untuk ${chalk.cyan(chosenAction)}:`,
+      message: t('historyFileAction', { file: chalk.cyan(chosenAction) }),
       choices: [
-        { name: '📖 Baca isi laporan (View Report)', value: 'view' },
-        { name: chalk.red('🗑️  Hapus file ini (Delete Report)'), value: 'delete' },
-        { name: '🔙 Batal / Pilih File Lain', value: 'cancel' },
+        { name: t('historyView'), value: 'view' },
+        { name: chalk.red(t('historyDelete')), value: 'delete' },
+        { name: t('historyCancel'), value: 'cancel' },
       ],
     });
 
@@ -654,12 +649,12 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
       await waitBackPrompt();
     } else if (fileAction === 'delete') {
       const confirmDelete = await confirm({
-        message: `Hapus file ini secara permanen?`,
+        message: t('historyDeleteConfirm'),
         default: true,
       });
       if (confirmDelete) {
         await deleteReportFile(chosenAction);
-        console.log(chalk.green(`\n✔ File report berhasil dihapus.\n`));
+        console.log(chalk.green(`\n${t('historyDeleted')}\n`));
       }
     }
   }
@@ -669,7 +664,7 @@ async function viewHistoryUI(defaultDir: string = '.lumio-reviews') {
 async function promptProvider(config: AppConfig, existing?: ProviderProfile): Promise<ProviderProfile | undefined> {
   let type = existing?.providerType;
   if (!type) {
-    const choice = await select({ message: 'Pilih tipe provider yang ingin ditambahkan:', choices: [
+    const choice = await select({ message: t('providerTypePrompt'), choices: [
       { name: 'Custom OpenAI-Compatible', value: 'custom' },
       ...['9router', 'openai', 'openrouter', 'ollama'].map(value => ({ name: value, value })),
     ] });
@@ -679,27 +674,27 @@ async function promptProvider(config: AppConfig, existing?: ProviderProfile): Pr
   let id = existing?.id || type;
   let name = existing?.name || type;
   if (!existing && type === 'custom') {
-    const raw = await input({ message: 'Nama identifier Provider baru:', validate: v => {
+    const raw = await input({ message: t('providerIdPrompt'), validate: v => {
       const id = v.trim().toLowerCase().replace(/\s+/g, '-');
-      return !id || ['back', 'b', 'new_custom'].includes(id) ? 'Identifier tidak valid' : config.providers?.[id] ? 'Provider sudah terdaftar' : true;
+      return !id || ['back', 'b', 'new_custom'].includes(id) ? t('providerIdInvalid') : config.providers?.[id] ? t('providerExists') : true;
     } });
     if (raw === 'back') return;
     id = raw.trim().toLowerCase().replace(/\s+/g, '-'); name = raw.trim();
   }
   if (!existing && config.providers?.[id]) {
-    console.log(chalk.yellow('Provider sudah terdaftar. Gunakan Edit.'));
+    console.log(chalk.yellow(t('providerExistsUseEdit')));
     await waitBackPrompt(); return;
   }
   const defaults: Record<string, string> = { '9router': 'http://127.0.0.1:20129/v1', openai: '', openrouter: 'https://openrouter.ai/api/v1', ollama: 'http://localhost:11434/v1', custom: '' };
-  const baseUrl = await input({ message: 'Base URL Provider (kosong = OpenAI default):', default: existing?.baseUrl ?? defaults[type], validate: v => {
-    if (!v.trim()) return type === 'openai' ? true : 'Base URL wajib diisi';
-    try { return ['http:', 'https:'].includes(new URL(v).protocol) || 'Gunakan HTTP(S) URL'; } catch { return 'URL tidak valid'; }
+  const baseUrl = await input({ message: t('providerUrlPrompt'), default: existing?.baseUrl ?? defaults[type], validate: v => {
+    if (!v.trim()) return type === 'openai' ? true : t('providerUrlRequired');
+    try { return ['http:', 'https:'].includes(new URL(v).protocol) || t('providerUrlHttp'); } catch { return t('urlInvalid'); }
   } });
   if (baseUrl === 'back') return;
-  const key = await password({ message: `API Key untuk ${id}${existing ? ' (kosong = pertahankan)' : ' (opsional)'}:`, mask: '*' });
+  const key = await password({ message: t('providerKeyPrompt', { id, hint: t(existing ? 'providerKeyKeep' : 'providerKeyOptional') }), mask: '*' });
   if (key === 'back') return;
-  console.log(`Provider: ${id}\nBase URL: ${baseUrl || '(OpenAI default)'}\nAPI Key: ${key || existing?.apiKey ? '(tersimpan / masked)' : '(kosong)'}`);
-  const action = await select({ message: 'Simpan provider?', choices: [{ name: 'Simpan', value: 'save' }, { name: 'Batalkan tanpa simpan', value: 'cancel' }] });
+  console.log(`Provider: ${id}\nBase URL: ${baseUrl || '(OpenAI default)'}\nAPI Key: ${key || existing?.apiKey ? t('providerKeyStored') : t('emptyParen')}`);
+  const action = await select({ message: t('providerSavePrompt'), choices: [{ name: t('save'), value: 'save' }, { name: t('cancelNoSave'), value: 'cancel' }] });
   if (action !== 'save') return;
   return { id, name, providerType: type, baseUrl: baseUrl.trim(), apiKey: key.trim() || existing?.apiKey || '', models: existing?.models || [] };
 }
@@ -708,64 +703,64 @@ async function quickSwitchModelUI(currentConfig: AppConfig) {
   while (true) {
     currentConfig = await loadConfig(false);
     const saved = currentConfig.savedModels || [];
-    printHeader('Menu Utama > ⚡ Ganti Model Cepat');
-    console.log(`Model Aktif: ${currentConfig.defaultModel || '(Kosong)'}`);
-    const action = await select({ message: 'Pilih model yang ingin diaktifkan atau kelola daftar model:', choices: [
-      ...saved.map(m => ({ name: `${m} [${currentConfig.modelProviderMap?.[m] || 'belum terpetakan'}]${m === currentConfig.defaultModel ? ' (Sedang Aktif)' : ''}`, value: `select:${m}` })),
-      { name: '➕ Tambah Model Baru ke Daftar', value: 'add' },
-      ...(saved.length ? [{ name: 'Hapus Model dari Daftar', value: 'delete' }, { name: 'Kosongkan Model Aktif', value: 'clear_active' }, { name: 'Kosongkan Semua Model', value: 'clear_all' }] : []),
+    printHeader(t('modelMenuTitle'));
+    console.log(t('modelActive', { model: currentConfig.defaultModel || t('emptyParen') }));
+    const action = await select({ message: t('modelPick'), choices: [
+      ...saved.map(m => ({ name: `${m} [${currentConfig.modelProviderMap?.[m] || t('modelUnmapped')}]${m === currentConfig.defaultModel ? t('modelIsActive') : ''}`, value: `select:${m}` })),
+      { name: t('modelAdd'), value: 'add' },
+      ...(saved.length ? [{ name: t('modelDelete'), value: 'delete' }, { name: t('modelClearActive'), value: 'clear_active' }, { name: t('modelClearAll'), value: 'clear_all' }] : []),
     ] });
     if (action === 'back') return;
     try {
       if (action === 'add') {
-        const raw = await input({ message: 'Masukkan nama model (pisahkan dengan koma untuk beberapa model):', validate: v => { try { parseModelNames(v); return true; } catch { return 'Nama model tidak valid'; } } });
+        const raw = await input({ message: t('modelNamePrompt'), validate: v => { try { parseModelNames(v); return true; } catch { return t('modelNameInvalid'); } } });
         if (raw === 'back') continue;
         const models = parseModelNames(raw);
-        const provider = await select({ message: 'Model ini disediakan oleh provider mana?', choices: [
+        const provider = await select({ message: t('modelProviderPrompt'), choices: [
           ...Object.values(currentConfig.providers || {}).map(p => ({ name: `${p.name} (${p.id})`, value: p.id })),
-          { name: '➕ Tambah Provider Baru...', value: 'new_custom' },
+          { name: t('providerAddNew'), value: 'new_custom' },
         ] });
         if (provider === 'back') continue;
         const draft = provider === 'new_custom' ? await promptProvider(currentConfig) : undefined;
         if (provider === 'new_custom' && !draft) continue;
         currentConfig = await updateProviderState(latest => assignModels(draft ? registerProvider(latest, draft) : latest, models, draft?.id || provider));
-        console.log(chalk.green('✔ Model ditambahkan ke provider dan dijadikan model aktif!'));
+        console.log(chalk.green(t('modelAdded')));
       } else if (action.startsWith('select:')) {
         currentConfig = await updateProviderState(latest => selectModel(latest, action.slice(7)));
-        console.log(chalk.green('✔ Model aktif berhasil diganti'));
+        console.log(chalk.green(t('modelSwitched')));
         await waitBackPrompt(); return;
       } else if (action === 'clear_active') {
         await updateProviderState(latest => ({ ...latest, defaultModel: '' }));
       } else if (action === 'clear_all') {
-        if (!await confirm({ message: 'Kosongkan semua model?', default: false })) continue;
+        if (!await confirm({ message: t('modelClearAllConfirm'), default: false })) continue;
         await updateProviderState(latest => removeModels(latest, [...new Set([...(latest.savedModels || []), ...Object.keys(latest.modelProviderMap || {})]) ]));
       } else if (action === 'delete') {
-        const model = await select({ message: 'Pilih model yang ingin dihapus:', choices: saved.map(value => ({ name: value, value })) });
+        const model = await select({ message: t('modelDeletePick'), choices: saved.map(value => ({ name: value, value })) });
         if (model === 'back') continue;
         await updateProviderState(latest => removeModels(latest, [model]));
       }
       await waitBackPrompt();
-    } catch (err: any) { console.log(chalk.red(err.message)); await waitBackPrompt(); }
+    } catch (err: any) { logError('ModelMenu', err); console.log(chalk.red(err.message)); await waitBackPrompt(); }
   }
 }
 
 async function configureAIProviderUI(currentConfig: AppConfig) {
   while (true) {
     currentConfig = await loadConfig(false);
-    printHeader('Menu Utama > 🤖 Configure AI Provider');
+    printHeader(t('providerMenuTitle'));
     const profiles = Object.values(currentConfig.providers || {});
-    console.log('Provider terdaftar: ' + (profiles.map(p => `${p.name} [${p.id}]`).join(', ') || '(Kosong)'));
-    console.log('Kelola model melalui Quick Switch Model.');
-    const action = await select({ message: 'Pilih aksi pengelolaan AI Provider:', choices: [
+    console.log(t('providerList', { list: profiles.map(p => `${p.name} [${p.id}]`).join(', ') || t('emptyParen') }));
+    console.log(t('providerModelsHint'));
+    const action = await select({ message: t('providerActionPrompt'), choices: [
       ...profiles.map(p => ({ name: `Edit ${p.name} [${p.id}]`, value: `edit:${p.id}` })),
-      { name: '➕ Tambah Provider Baru', value: 'add' },
-      ...(profiles.length ? [{ name: 'Hapus Provider Terdaftar', value: 'delete' }] : []),
+      { name: t('providerAdd'), value: 'add' },
+      ...(profiles.length ? [{ name: t('providerDelete'), value: 'delete' }] : []),
     ] });
     if (action === 'back') return;
     try {
       if (action === 'delete') {
-        const id = await select({ message: 'Pilih provider yang ingin dihapus:', choices: profiles.map(p => ({ name: p.name, value: p.id })) });
-        if (id === 'back' || !await confirm({ message: 'Hapus provider beserta model yang terhubung?', default: false })) continue;
+        const id = await select({ message: t('providerDeletePick'), choices: profiles.map(p => ({ name: p.name, value: p.id })) });
+        if (id === 'back' || !await confirm({ message: t('providerDeleteConfirm'), default: false })) continue;
         await updateProviderState(latest => removeProvider(latest, id));
       } else {
         const existing = action.startsWith('edit:') ? currentConfig.providers?.[action.slice(5)] : undefined;
@@ -773,23 +768,23 @@ async function configureAIProviderUI(currentConfig: AppConfig) {
         if (!draft) continue;
         await updateProviderState(latest => registerProvider(latest, draft, !!existing));
       }
-      console.log(chalk.green('✔ Konfigurasi provider berhasil disimpan!'));
+      console.log(chalk.green(t('providerSaved')));
       await waitBackPrompt();
-    } catch (err: any) { console.log(chalk.red(err.message)); await waitBackPrompt(); }
+    } catch (err: any) { logError('ProviderMenu', err); console.log(chalk.red(err.message)); await waitBackPrompt(); }
   }
 }
 
 async function viewLogsUI() {
   while (true) {
-    printHeader('Menu Utama > ⚙️ Pengaturan > 📜 System Logs & Tracing');
+    printHeader(t('logsMenuTitle'));
     const logPath = getLogFilePath();
     const lines = await readRecentLogs(30);
 
-    console.log(chalk.gray(`Path Log: ${chalk.cyan(logPath)}\n`));
-    console.log(chalk.cyan('─── Catatan Log Error & Tracing Terakhir (Max 30 Baris) ───'));
+    console.log(chalk.gray(`${t('logsPath', { path: chalk.cyan(logPath) })}\n`));
+    console.log(chalk.cyan(t('logsHeader')));
 
     if (lines.length === 0) {
-      console.log(chalk.gray('\n(Belum ada catatan log error/tracing. File log masih bersih)\n'));
+      console.log(chalk.gray(`\n${t('logsEmpty')}\n`));
     } else {
       console.log('');
       for (const line of lines) {
@@ -813,11 +808,11 @@ async function viewLogsUI() {
     console.log(chalk.cyan('───────────────────────────────────────────────────────────\n'));
 
     const logAction = await select({
-      message: 'Pilih aksi log:',
+      message: t('logsActionPrompt'),
       choices: [
-        { name: '🔄 Refresh Log Terbaru', value: 'refresh' },
-        { name: '🧹 Bersihkan Semua Log (Clear Log)', value: 'clear' },
-        { name: '🔙 Kembali ke Menu Pengaturan', value: 'back' },
+        { name: t('logsRefresh'), value: 'refresh' },
+        { name: t('logsClear'), value: 'clear' },
+        { name: t('logsBack'), value: 'back' },
       ],
     });
 
@@ -825,32 +820,32 @@ async function viewLogsUI() {
 
     if (logAction === 'clear') {
       const ok = await confirm({
-        message: 'Apakah Anda yakin ingin MENGHAPUS / mengosongkan seluruh file log?',
+        message: t('logsClearConfirm'),
         default: false,
       });
 
       if (ok) {
         await clearAllLogs();
-        console.log(chalk.green('\n✔ File log berhasil dikosongkan!\n'));
+        console.log(chalk.green(`\n${t('logsCleared')}\n`));
       }
     }
   }
 }
 
 async function showStatusUI(inRepo: boolean, config: AppConfig) {
-  printHeader('Menu Utama > ⚙️ System Status');
+  printHeader(t('statusMenuTitle'));
   const currentBranch = inRepo ? await getCurrentBranch() : '-';
   const reportDir = resolveReportDir(config.defaultReportDir || '.lumio-reviews');
   const version = getAppVersion();
   const resolved = resolveProviderForModel(config);
 
-  console.log(chalk.cyan('─── Status Konfigurasi & Lingkungan ───'));
+  console.log(chalk.cyan(t('statusHeader')));
   console.log(`Brand Engine     : ${chalk.bold.yellow(`✨ Lumio v${version}`)}`);
-  console.log(`Git Repository   : ${inRepo ? chalk.green(`Aktif (Branch: ${currentBranch})`) : chalk.red('Tidak Terdeteksi')}`);
+  console.log(`Git Repository   : ${inRepo ? chalk.green(t('statusGitActive', { branch: currentBranch })) : chalk.red(t('statusGitMissing'))}`);
   console.log(`Database Mode    : ${config.dbType === 'qdrant' ? chalk.bold.green('🌐 Remote VPS Qdrant') : chalk.bold.blue('💻 Local LanceDB')}`);
   if (config.dbType === 'qdrant') {
-    console.log(`Qdrant Server    : ${config.qdrantUrl ? chalk.yellow(config.qdrantUrl) : chalk.red('(Belum diset)')}`);
-    console.log(`Collection Name  : ${config.qdrantCollection ? chalk.cyan(config.qdrantCollection) : chalk.red('(Belum diset)')}`);
+    console.log(`Qdrant Server    : ${config.qdrantUrl ? chalk.yellow(config.qdrantUrl) : chalk.red(t('unsetParen'))}`);
+    console.log(`Collection Name  : ${config.qdrantCollection ? chalk.cyan(config.qdrantCollection) : chalk.red(t('unsetParen'))}`);
   } else {
     console.log(`Vector DB Path   : ${chalk.yellow('~/.lumio/db')}`);
   }
@@ -866,7 +861,7 @@ async function showStatusUI(inRepo: boolean, config: AppConfig) {
 
 async function waitBackPrompt() {
   await select({
-    message: 'Aksi:',
+    message: t('waitBack'),
     choices: [
       {
         name: chalk.yellow('🔙 esc back'),

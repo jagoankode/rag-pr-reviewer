@@ -41,11 +41,12 @@ export function repoAudit(snapshot: RuleSnapshot, repo: RepoContext): RepoFindin
 
 /** Branch under review and its non-merge commits since the merge base. */
 export function readRepoContext(refs: { head: string; mergeBase: string; mode: string }, source: string | undefined, cwd = process.cwd()): RepoContext {
-  const git = (...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
-  let branch = source;
-  if (!branch || /^[0-9a-f]{7,40}$/.test(branch)) {
-    try { branch = git('rev-parse', '--abbrev-ref', 'HEAD'); } catch { branch = undefined; }
-  }
+  const git = (...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  // Without a source the checked-out branch is reviewed; a source that is not a branch (SHA, tag) has no branch to check.
+  let branch: string | undefined;
+  try {
+    branch = source ? git('rev-parse', '--symbolic-full-name', source).match(/^refs\/(?:heads|remotes)\/(.+)$/)?.[1] : git('rev-parse', '--abbrev-ref', 'HEAD');
+  } catch { branch = undefined; }
   if (branch === 'HEAD') branch = undefined;
   const range = refs.mode === 'committed-pr' ? `${refs.mergeBase}..${refs.head}` : refs.mode === 'branch' ? `${refs.mergeBase}..HEAD` : undefined;
   const commits = range ? git('log', '--no-merges', '--format=%h%x09%s', range).split('\n').filter(Boolean).map(line => {

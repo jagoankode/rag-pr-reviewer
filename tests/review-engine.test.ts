@@ -237,7 +237,7 @@ test('verdict: errors request changes, warnings comment, skipped files never blo
   const skipped = { file: 'gone.ts', violations: [], coverage: [], complete: false, skipped: 'File deleted' };
   const clean = { file: 'a.ts', violations: [], coverage: [], complete: true };
   assert.equal(summarizeAudit([clean, skipped], s).status, 'APPROVE');
-  assert.equal(summarizeAudit([skipped], s).status, 'COMMENT');
+  assert.equal(summarizeAudit([skipped], s).status, 'APPROVE');
   assert.equal(summarizeAudit([], snapshotRules([])).status, 'COMMENT');
   const repo = [{ ruleId: 'x', rule: 'x', check: 'branch-name' as const, severity: 'error' as const, subject: 'b', comment: 'c', suggestedFix: null }];
   assert.equal(summarizeAudit([clean], s, repo).status, 'REQUEST_CHANGES');
