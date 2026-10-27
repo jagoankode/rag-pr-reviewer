@@ -115,6 +115,15 @@ if [ ! -d "$APP_DIR/node_modules/commander" ]; then
     (cd "$APP_DIR" && npm install --omit=dev --loglevel=error --no-audit --no-fund --registry=https://registry.npmjs.org)
 fi
 
+# Jaringan kantor yang memeriksa SSL memakai CA dari OS store; Node hanya membawa CA publik.
+# NODE_USE_SYSTEM_CA untuk Node baru, bundle CA sistem untuk Node lama.
+export NODE_USE_SYSTEM_CA="${NODE_USE_SYSTEM_CA:-1}"
+if [ -z "$NODE_EXTRA_CA_CERTS" ]; then
+    for ca in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do
+        if [ -r "$ca" ]; then export NODE_EXTRA_CA_CERTS="$ca"; break; fi
+    done
+fi
+
 exec "$NODE_EXEC" "$APP_DIR/dist/index.js" "$@"
 EOF
 

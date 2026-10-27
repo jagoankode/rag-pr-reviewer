@@ -3,6 +3,7 @@ import { QdrantClient } from '@qdrant/js-client-rest';
 import { AppConfig } from './config.js';
 import { getDb } from './db.js';
 import { CheckSpec, parseChecks } from './checkers/spec.js';
+import { connectionError } from './network.js';
 
 export interface ReviewRule {
   id: string;
@@ -57,7 +58,12 @@ export async function loadReviewRules(config: AppConfig): Promise<RuleSnapshot> 
   let offset: string | number | undefined;
   const seen = new Set<string>();
   do {
-    const page = await client.scroll(config.qdrantCollection, { limit: 256, offset, with_payload: true, with_vector: false });
+    let page: Awaited<ReturnType<QdrantClient['scroll']>>;
+    try {
+      page = await client.scroll(config.qdrantCollection, { limit: 256, offset, with_payload: true, with_vector: false });
+    } catch (err) {
+      throw connectionError('Qdrant', url.origin, err);
+    }
     for (const p of page.points) {
       // New content-addressed ingestion IDs survive independent DB imports. Legacy backend IDs remain compatible.
       const originalId = p.payload?.originalId;

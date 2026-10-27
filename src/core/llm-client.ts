@@ -1,5 +1,6 @@
 import { AppConfig, loadConfig, resolveProviderForModel } from './config.js';
 import { t } from './i18n.js';
+import { connectionError } from './network.js';
 
 /**
  * Universal LLM caller yang kebal terhadap semua jenis proxy (9router, LiteLLM, dsb.)
@@ -51,8 +52,7 @@ export async function callLLM(prompt: string, modelOverride?: string, signal?: A
     if (signal?.aborted || netErr.name === 'AbortError') {
       throw netErr;
     }
-    const causeMsg = netErr.cause?.message || netErr.cause?.code || netErr.message;
-    throw new Error(t('llmConnectFailed', { url, cause: causeMsg }));
+    throw connectionError('AI provider', url, netErr);
   }
 
   if (!res.ok) {

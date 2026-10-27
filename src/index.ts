@@ -11,12 +11,15 @@ import { reviewCommand } from './commands/review.js';
 import { rulesCompileCommand } from './commands/rules.js';
 import { learnFeatureCommand } from './commands/learn.js';
 import { runInteractiveTUI } from './commands/tui.js';
+import { doctorCommand } from './commands/doctor.js';
 import { getAppVersion } from './core/version.js';
 import { checkAndUpgradeApp, syncGuidelinesRules } from './core/updater.js';
 import { loadConfig } from './core/config.js';
 import { t } from './core/i18n.js';
+import { trustSystemCertificates } from './core/network.js';
 
 dotenv.config();
+trustSystemCertificates();
 initNavigationGuard();
 
 const program = new Command();
@@ -65,6 +68,14 @@ program
       if (status === 'check-failed') console.error(chalk.red(t('upgradeCheckFailed', { version: getAppVersion() })));
       process.exitCode = 1;
     }
+  });
+
+program
+  .command('doctor')
+  .description('Check the installation, certificates and connections to the rule database and AI model')
+  .option('--no-ai', 'Skip the AI provider checks (no model call)')
+  .action(async (options) => {
+    if (!(await doctorCommand({ ai: options.ai }))) process.exitCode = 1;
   });
 
 program

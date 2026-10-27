@@ -5,6 +5,7 @@ import { select, input, confirm, password } from '../core/nav.js';
 import { ingestCommand, ingestDirectRuleCommand } from './ingest.js';
 import { reviewCommand } from './review.js';
 import { inspectGuidelinesCommand } from './guidelines.js';
+import { doctorCommand } from './doctor.js';
 import { learnFeatureCommand } from './learn.js';
 import { runInteractiveKnowledgeDialog } from './dialog.js';
 import { isGitRepo, getAvailableBranches, getCurrentBranch } from '../core/git.js';
@@ -168,6 +169,10 @@ async function settingsMenuUI(config: AppConfig, inRepo: boolean) {
           value: 'database',
         },
         {
+          name: `${chalk.bold.cyan(padAnsiEnd(t('settingDoctorTitle'), 32))} ${chalk.gray(t('settingDoctorDesc'))}`,
+          value: 'doctor',
+        },
+        {
           name: `${chalk.bold.cyan(padAnsiEnd(t('settingLogTitle'), 32))} ${chalk.gray(t('settingLogDesc'))}`,
           value: 'logs',
         },
@@ -185,6 +190,9 @@ async function settingsMenuUI(config: AppConfig, inRepo: boolean) {
     } else if (settingChoice === 'database') {
       // The form edits the global config, so it starts from the global values, not project overrides.
       await configureDatabaseUI(await loadConfig(false));
+    } else if (settingChoice === 'doctor') {
+      await doctorCommand();
+      await waitBackPrompt();
     } else if (settingChoice === 'logs') {
       await viewLogsUI();
     }

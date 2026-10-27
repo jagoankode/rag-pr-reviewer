@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import chalk from 'chalk';
 import { DocChunk } from './chunker.js';
 import { AppConfig, getActiveAIProvider, loadConfig, getConfigDir } from './config.js';
+import { connectionError } from './network.js';
 import { createTfIdfIndex } from './local-embedder.js';
 import { getNormHash, cosineSimilarity } from './dedup.js';
 import { t } from './i18n.js';
@@ -81,7 +82,12 @@ export async function getQdrantClient(): Promise<{ client: QdrantClient; collect
   }
   const client = qdrantInstance.client;
 
-  const collections = await client.getCollections();
+  let collections: Awaited<ReturnType<QdrantClient['getCollections']>>;
+  try {
+    collections = await client.getCollections();
+  } catch (err) {
+    throw connectionError('Qdrant', parsedUrl.origin, err);
+  }
   const exists = collections.collections.some((c) => c.name === collection);
   if (!exists) {
     const vectorSize = getVectorSize(config);

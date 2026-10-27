@@ -32,10 +32,15 @@ Setelah instalasi selesai, jalankan:
 lumio
 ```
 
-*Untuk uninstall:*
+*Untuk uninstall* (menghapus aplikasi, config, database lokal, cache, log, dan baris PATH dari installer):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jagoankode/rag-pr-reviewer/main/uninstall.sh | bash
+# Simpan config & database lokal:
+curl -fsSL https://raw.githubusercontent.com/jagoankode/rag-pr-reviewer/main/uninstall.sh | bash -s -- --keep-data
 ```
+
+*Jaringan kantor dengan SSL inspection:* Lumio otomatis memakai CA dari sistem operasi. Bila tetap muncul
+error sertifikat, pasang CA kantor ke sistem atau set `NODE_EXTRA_CA_CERTS` ke file CA tersebut.
 
 ---
 
@@ -93,6 +98,10 @@ lumio rules compile --try ./src --out drafts.json
 
 # Paksa sinkronisasi rules dari Qdrant VPS
 lumio sync
+
+# Diagnosa instalasi & koneksi: versi, Node/CA, git, config, sertifikat, database rule, model AI
+lumio doctor
+lumio doctor --no-ai   # tanpa memanggil model
 
 # Periksa dan upgrade Lumio ke versi rilis terbaru
 lumio upgrade

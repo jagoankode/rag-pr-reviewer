@@ -65,7 +65,7 @@ function fetchJson<T>(url: string, timeoutMs: number = 3000): Promise<T | null> 
  * Compare semantic versions (e.g. 2.2.0 vs 2.3.0)
  * Returns 1 if vA > vB, -1 if vA < vB, 0 if equal
  */
-function compareSemver(vA: string, vB: string): number {
+export function compareSemver(vA: string, vB: string): number {
   const partsA = vA.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
   const partsB = vB.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
@@ -75,6 +75,11 @@ function compareSemver(vA: string, vB: string): number {
     if (a < b) return -1;
   }
   return 0;
+}
+
+/** Latest version on GitHub main, or null when it cannot be read. */
+export async function fetchLatestVersion(timeoutMs: number = 5000): Promise<string | null> {
+  return (await fetchJson<{ version: string }>(`${GITHUB_RAW_PKG}?t=${Date.now()}`, timeoutMs))?.version || null;
 }
 
 // A clean install (download + npm install) takes about 45s, so the old 45s limit cut most upgrades off.
