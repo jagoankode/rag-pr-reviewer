@@ -11,6 +11,7 @@ import { loadReviewRules } from '../core/review-rules.js';
 import { callLLM } from '../core/llm-client.js';
 import { t } from '../core/i18n.js';
 import { logError } from '../core/logger.js';
+import { isWsl, parsePemBundle, trustSystemCertificates } from '../core/network.js';
 
 type Status = 'ok' | 'warn' | 'fail';
 interface CheckResult { status: Status; detail: string; hint?: string; }
@@ -28,11 +29,39 @@ async function checkVersion(): Promise<CheckResult> {
 }
 
 function checkNode(): CheckResult {
-  const systemCa = typeof (tls as { getCACertificates?: unknown }).getCACertificates === 'function';
-  const extra = process.env.NODE_EXTRA_CA_CERTS;
-  const detail = `${process.version} · ${systemCa ? t('doctorSystemCaYes') : t('doctorSystemCaNo')}${extra ? ` · NODE_EXTRA_CA_CERTS=${extra}` : ''}`;
-  if (!systemCa && !extra) return { status: 'warn', detail, hint: t('doctorNodeHint') };
+  // Re-reads the Windows roots on WSL, so a CA that IT installed today is picked up by the checks below.
+  const trusted = trustSystemCertificates(true);
+  const bundle = launcherBundle();
+  const parts = [process.version];
+  if (bundle) parts.push(t('doctorBundle', { count: parsePemBundle(fs.readFileSync(bundle, 'utf8')).length }));
+  else if (process.env.NODE_EXTRA_CA_CERTS) parts.push(`NODE_EXTRA_CA_CERTS=${process.env.NODE_EXTRA_CA_CERTS}`);
+  parts.push(trusted ? t('doctorSystemCaYes') : t('doctorSystemCaNo'));
+  if (trusted && isWsl()) parts.push(t('doctorWindowsCa', { count: trusted.windows }));
+  const detail = parts.join(' · ');
+  // Either path is enough: the launcher bundle works on every Node, the runtime API on newer ones.
+  if (!bundle && !trusted && !process.env.NODE_EXTRA_CA_CERTS) return { status: 'warn', detail, hint: t('doctorNodeHint') };
+  if (isWsl() && trusted && !trusted.windows) return { status: 'warn', detail, hint: t('doctorWindowsCaHint') };
   return { status: 'ok', detail };
+}
+
+/** The CA bundle the `lumio` launcher builds before Node starts, when this process was started through it. */
+function launcherBundle(): string | undefined {
+  const file = process.env.NODE_EXTRA_CA_CERTS;
+  return file && path.resolve(file) === path.join(getConfigDir(), 'cache', 'ca-bundle.pem') && fs.existsSync(file) ? file : undefined;
+}
+
+/** The user's own NODE_EXTRA_CA_CERTS; the launcher keeps it in LUMIO_USER_EXTRA_CA_CERTS and points Node at its bundle. */
+const userExtraCa = (): string | undefined => process.env.LUMIO_USER_EXTRA_CA_CERTS || (launcherBundle() ? undefined : process.env.NODE_EXTRA_CA_CERTS);
+
+/** NODE_EXTRA_CA_CERTS must point at CA certificates; a site certificate there trusts nothing else. */
+function checkExtraCa(file: string): CheckResult {
+  if (!fs.existsSync(file)) return { status: 'warn', detail: t('doctorExtraCaMissing', { file }), hint: t('doctorExtraCaHint') };
+  const certs = parsePemBundle(fs.readFileSync(file, 'utf8'));
+  if (!certs.length) return { status: 'warn', detail: t('doctorExtraCaUnreadable', { file }), hint: t('doctorExtraCaHint') };
+  const cas = certs.filter(cert => cert.ca);
+  const name = (cert: { subject: string }) => cert.subject.match(/CN=([^\n]+)/)?.[1] || cert.subject.replace(/\n/g, ', ');
+  if (!cas.length) return { status: 'warn', detail: t('doctorExtraCaNotCa', { file, name: name(certs[0]) }), hint: t('doctorExtraCaHint') };
+  return { status: 'ok', detail: `${file} · ${cas.length === 1 ? name(cas[0]) : t('doctorExtraCaCount', { count: cas.length })}` };
 }
 
 function checkGit(): CheckResult {
@@ -114,6 +143,7 @@ export async function doctorCommand(options: { ai?: boolean } = {}): Promise<boo
   const checks: [string, () => CheckResult | Promise<CheckResult>][] = [
     [t('doctorVersion'), checkVersion],
     ['Node.js', checkNode],
+    ...(userExtraCa() ? [['NODE_EXTRA_CA_CERTS', () => checkExtraCa(userExtraCa()!)] as [string, () => CheckResult]] : []),
     ['Git', checkGit],
     [t('doctorConfig'), () => checkConfig(config)],
   ];

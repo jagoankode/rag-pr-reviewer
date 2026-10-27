@@ -115,14 +115,54 @@ if [ ! -d "$APP_DIR/node_modules/commander" ]; then
     (cd "$APP_DIR" && npm install --omit=dev --loglevel=error --no-audit --no-fund --registry=https://registry.npmjs.org)
 fi
 
-# Jaringan kantor yang memeriksa SSL memakai CA dari OS store; Node hanya membawa CA publik.
-# NODE_USE_SYSTEM_CA untuk Node baru, bundle CA sistem untuk Node lama.
-export NODE_USE_SYSTEM_CA="${NODE_USE_SYSTEM_CA:-1}"
-if [ -z "$NODE_EXTRA_CA_CERTS" ]; then
-    for ca in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do
-        if [ -r "$ca" ]; then export NODE_EXTRA_CA_CERTS="$ca"; break; fi
-    done
+# Jaringan kantor yang memeriksa SSL memakai CA kantor dari OS store (di WSL: dari Windows),
+# sedangkan Node hanya membawa CA publik. Node membaca NODE_EXTRA_CA_CERTS sekali saat start,
+# jadi bundle disusun di sini, sebelum Node jalan; cara ini berlaku di semua versi Node.
+CA_DIR="$HOME/.lumio/cache"
+CA_BUNDLE="$CA_DIR/ca-bundle.pem"
+mkdir -p "$CA_DIR" 2>/dev/null
+
+pem_only() { sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' "$1" 2>/dev/null; }
+
+# Cache seminggu; gagal membaca tetap menulis file (kosong) agar start berikutnya tidak lambat.
+refresh_os_roots() {
+    local file="$1"; shift
+    if [ ! -f "$file" ] || [ -n "$(find "$file" -mmin +10080 2>/dev/null)" ]; then
+        "$@" > "$file.$$" 2>/dev/null; mv -f "$file.$$" "$file" 2>/dev/null
+    fi
+}
+windows_roots() {
+    timeout 15 powershell.exe -NoProfile -NonInteractive -Command \
+        'Get-ChildItem Cert:\LocalMachine\Root, Cert:\CurrentUser\Root | ForEach-Object { [Convert]::ToBase64String($_.RawData) }' \
+        | tr -d '\r' | sort -u \
+        | awk 'NF { print "-----BEGIN CERTIFICATE-----"; for (i = 1; i <= length($0); i += 64) print substr($0, i, 64); print "-----END CERTIFICATE-----" }'
+}
+macos_roots() { security find-certificate -a -p /Library/Keychains/System.keychain; }
+
+OS_ROOTS=""
+if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null && command -v powershell.exe >/dev/null 2>&1; then
+    OS_ROOTS="$CA_DIR/windows-roots.pem"; refresh_os_roots "$OS_ROOTS" windows_roots
+elif [ "$(uname -s)" = "Darwin" ] && command -v security >/dev/null 2>&1; then
+    OS_ROOTS="$CA_DIR/macos-roots.pem"; refresh_os_roots "$OS_ROOTS" macos_roots
 fi
+
+# Setelan NODE_EXTRA_CA_CERTS milik user tetap ikut di bundle; aslinya disimpan untuk `lumio doctor`.
+if [ -n "$NODE_EXTRA_CA_CERTS" ] && [ "$NODE_EXTRA_CA_CERTS" != "$CA_BUNDLE" ]; then
+    export LUMIO_USER_EXTRA_CA_CERTS="$NODE_EXTRA_CA_CERTS"
+fi
+{
+    for ca in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do
+        if [ -r "$ca" ]; then pem_only "$ca"; break; fi
+    done
+    [ -n "$OS_ROOTS" ] && pem_only "$OS_ROOTS"
+    [ -n "$LUMIO_USER_EXTRA_CA_CERTS" ] && pem_only "$LUMIO_USER_EXTRA_CA_CERTS"
+} > "$CA_BUNDLE.$$" 2>/dev/null
+if [ -s "$CA_BUNDLE.$$" ] && mv -f "$CA_BUNDLE.$$" "$CA_BUNDLE" 2>/dev/null; then
+    export NODE_EXTRA_CA_CERTS="$CA_BUNDLE"
+else
+    rm -f "$CA_BUNDLE.$$" 2>/dev/null
+fi
+export NODE_USE_SYSTEM_CA="${NODE_USE_SYSTEM_CA:-1}"
 
 exec "$NODE_EXEC" "$APP_DIR/dist/index.js" "$@"
 EOF

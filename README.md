@@ -39,8 +39,9 @@ curl -fsSL https://raw.githubusercontent.com/jagoankode/rag-pr-reviewer/main/uni
 curl -fsSL https://raw.githubusercontent.com/jagoankode/rag-pr-reviewer/main/uninstall.sh | bash -s -- --keep-data
 ```
 
-*Jaringan kantor dengan SSL inspection:* Lumio otomatis memakai CA dari sistem operasi. Bila tetap muncul
-error sertifikat, pasang CA kantor ke sistem atau set `NODE_EXTRA_CA_CERTS` ke file CA tersebut.
+*Jaringan kantor dengan SSL inspection:* perintah `lumio` menyiapkan bundle CA sebelum Node berjalan (berlaku di
+semua versi Node): CA sistem Linux, Root CA Windows bila berjalan di WSL, Keychain sistem di macOS, dan isi
+`NODE_EXTRA_CA_CERTS` milik Anda. Bila tetap muncul error sertifikat, jalankan `lumio doctor`.
 
 ---
 

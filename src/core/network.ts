@@ -1,21 +1,79 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import tls from 'tls';
+import { X509Certificate } from 'crypto';
+import { execFileSync } from 'child_process';
+import { getConfigDir } from './config.js';
 import { t } from './i18n.js';
 import { logError } from './logger.js';
 
 type CaApi = typeof tls & { getCACertificates?: (type: string) => string[]; setDefaultCACertificates?: (certs: string[]) => void };
 
+const WINDOWS_ROOTS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+export const isWsl = (): boolean => process.platform === 'linux' && (!!process.env.WSL_DISTRO_NAME || /microsoft/i.test(os.release()));
+
+/** Every parseable certificate in a PEM bundle; anything else is skipped. */
+export function parsePemBundle(text: string): X509Certificate[] {
+  const out: X509Certificate[] = [];
+  for (const pem of text.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) || []) {
+    try {
+      out.push(new X509Certificate(pem));
+    } catch {}
+  }
+  return out;
+}
+
+const toPem = (base64: string): string => `-----BEGIN CERTIFICATE-----\n${base64.match(/.{1,64}/g)!.join('\n')}\n-----END CERTIFICATE-----\n`;
+
 /**
- * Office networks that inspect TLS re-sign traffic with their own CA. That CA is installed in the OS store,
- * which Node's bundled list does not include, so every request fails with "fetch failed". Trust both.
- * Node versions without this API rely on NODE_USE_SYSTEM_CA / NODE_EXTRA_CA_CERTS set by the launcher.
+ * WSL has its own certificate store and does not see Windows', where IT installs the office CA.
+ * Reads the Windows root stores through powershell.exe, cached for a week; `refresh` forces a new read.
+ * A failed read leaves an empty cache, so a missing powershell.exe does not slow every start.
  */
-export function trustSystemCertificates(): void {
-  const api = tls as CaApi;
-  if (!api.getCACertificates || !api.setDefaultCACertificates) return;
+export function windowsRootCertificates(refresh = false): string[] {
+  if (!isWsl()) return [];
+  const file = path.join(getConfigDir(), 'cache', 'windows-roots.pem');
+  const fresh = (): boolean => fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs < WINDOWS_ROOTS_MAX_AGE_MS;
   try {
-    api.setDefaultCACertificates([...new Set([...api.getCACertificates('default'), ...api.getCACertificates('system')])]);
+    if (refresh || !fresh()) {
+      let pems = '';
+      try {
+        const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+          'Get-ChildItem Cert:\\LocalMachine\\Root, Cert:\\CurrentUser\\Root | ForEach-Object { [Convert]::ToBase64String($_.RawData) }'],
+          { encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'ignore'] });
+        pems = [...new Set(out.split(/\r?\n/).map(line => line.trim()).filter(Boolean))].map(toPem).join('');
+      } catch (err) {
+        logError('WindowsCA', err);
+      }
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, pems);
+    }
+    return parsePemBundle(fs.readFileSync(file, 'utf8')).filter(cert => cert.ca).map(cert => cert.toString());
+  } catch (err) {
+    logError('WindowsCA', err);
+    return [];
+  }
+}
+
+/**
+ * Office networks that inspect TLS re-sign traffic with their own CA. That CA is installed in the OS store
+ * (and on WSL, in the Windows store), which Node's bundled list does not include, so every request fails
+ * with "fetch failed". Trust all of them; this only adds CAs the machine already trusts.
+ * Node versions without this API rely on NODE_USE_SYSTEM_CA / NODE_EXTRA_CA_CERTS set by the launcher.
+ * Returns how many Windows roots were added, or null when this Node cannot change its CA list.
+ */
+export function trustSystemCertificates(refreshWindows = false): { windows: number } | null {
+  const api = tls as CaApi;
+  if (!api.getCACertificates || !api.setDefaultCACertificates) return null;
+  try {
+    const windows = windowsRootCertificates(refreshWindows);
+    api.setDefaultCACertificates([...new Set([...api.getCACertificates('default'), ...api.getCACertificates('system'), ...windows])]);
+    return { windows: windows.length };
   } catch (err) {
     logError('SystemCA', err);
+    return null;
   }
 }
 
