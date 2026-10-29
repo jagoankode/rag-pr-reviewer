@@ -78,20 +78,30 @@ ${result.summary}
     }
   }
 
+  const existing = result.existingViolations || [];
+  if (existing.length) {
+    md += `\n## ${out('mdExisting')} (${existing.length})\n\n_${out('mdExistingNote')}_\n\n| File | ${out('mdLine')} | ${out('mdSeverity')} | ${out('mdRule')} | ${out('mdComment')} |\n| --- | ---: | --- | --- | --- |\n`;
+    for (const v of existing) md += `| \`${cell(v.file)}\` | ${v.line} | ${v.severity} | ${cell(v.rule)} | ${cell(v.comment)} |\n`;
+  }
+
   if (result.coverage?.length) {
-    const perRule = new Map<string, { fail: number; pass: number; na: number }>();
+    const perRule = new Map<string, { fail: number; pass: number; na: number; unverified: number }>();
     for (const c of result.coverage) {
-      const entry = perRule.get(c.ruleId) || { fail: 0, pass: 0, na: 0 };
-      if (c.status === 'FAIL') entry.fail++; else if (c.status === 'PASS') entry.pass++; else entry.na++;
+      const entry = perRule.get(c.ruleId) || { fail: 0, pass: 0, na: 0, unverified: 0 };
+      if (c.status === 'FAIL') entry.fail++; else if (c.status === 'PASS') entry.pass++; else if (c.status === 'NOT_APPLICABLE') entry.na++; else entry.unverified++;
       perRule.set(c.ruleId, entry);
     }
-    const titles = new Map(result.violations.map(v => [v.ruleId, v.rule]));
-    md += `\n## ${out('mdCoverage')}\n\n| ${out('mdRule')} | FAIL | PASS | N/A |\n| --- | ---: | ---: | ---: |\n`;
-    for (const [ruleId, e] of perRule) md += `| ${cell(titles.get(ruleId || '') || ruleId)} | ${e.fail} | ${e.pass} | ${e.na} |\n`;
+    const titles = new Map([...result.violations, ...existing].map(v => [v.ruleId, v.rule]));
+    md += `\n## ${out('mdCoverage')}\n\n| ${out('mdRule')} | FAIL | PASS | N/A | UNVERIFIED |\n| --- | ---: | ---: | ---: | ---: |\n`;
+    for (const [ruleId, e] of perRule) md += `| ${cell(result.ruleTitles?.[ruleId] || titles.get(ruleId || '') || ruleId)} | ${e.fail} | ${e.pass} | ${e.na} | ${e.unverified} |\n`;
   }
   if (result.skippedFiles?.length) {
     md += `\n## ${out('mdSkipped')}\n\n`;
     for (const s of result.skippedFiles) md += `- \`${s.file}\`: ${s.reason}\n`;
+  }
+  if (result.excludedFiles?.length) {
+    md += `\n## ${out('mdExcluded')}\n\n`;
+    for (const file of result.excludedFiles) md += `- \`${file.file}\`: ${file.reason}\n`;
   }
   if (result.notes?.length) {
     md += `\n## ${out('mdNotes')}\n\n`;
@@ -110,6 +120,7 @@ ${result.summary}
 - **Rules:** \`${s.rules}\`
 - **Input digest:** \`${s.inputs}\`
 - **Mode / scope:** ${s.mode} / ${s.scope}
+- **AI scope:** ${s.aiScope || 'full'}
 `;
   }
   md += `\n\n*${out('mdFooter')} (https://github.com/jagoankode/rag-pr-reviewer)*\n`;

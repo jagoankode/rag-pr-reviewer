@@ -11,10 +11,11 @@ import { captureReviewInputs, ReviewInput } from '../src/core/review-input.js';
 import { getGitDiff } from '../src/core/git.js';
 import { readRepoContext, repoAudit } from '../src/core/checkers/git.js';
 import { trimFindings } from '../src/commands/review.js';
+import { formatReportToMarkdown } from '../src/core/history.js';
 import { setLanguage } from '../src/core/i18n.js';
 setLanguage('en');
 
-const rules = snapshotRules([{ id: 'zz-decl', source: 'team', title: 'Z1 Declarations', content: 'Prefer const.', checks: [{ type: 'forbid-syntax', syntax: 'var', severity: 'error', message: 'Use const.' }] }]);
+const rules = snapshotRules([{ id: 'zz-decl', source: 'team', title: 'Z1 Declarations', content: 'Prefer const.', checksComplete: true, checks: [{ type: 'forbid-syntax', syntax: 'var', severity: 'error', message: 'Use const.' }] }]);
 const input: ReviewInput = { file: 'src/widget.ts', content: 'const a = 1;\n', folderFiles: ['widget.ts'], addedLines: [1], diff: 'diff', scope: 'full', hash: 'x' };
 const hit = (file: string, line: number, severity: 'error' | 'warning'): Finding =>
   ({ id: `${file}:${line}`, ruleId: 'zz-decl', rule: 'Z1 Declarations', file, line, column: 1, check: 'x', engine: 'ast', severity, comment: 'c', suggestedFix: null });
@@ -107,4 +108,31 @@ test('branch-name checks the reviewed source, not the checked-out branch', () =>
   const s = snapshotRules([{ id: 'zz-branch', source: 'team', title: 'Z3 Branches', content: 'Branch names.', checks: [{ type: 'branch-name', pattern: '^feature/', severity: 'error', message: 'Bad branch {name}.' }] }]);
   assert.deepEqual(repoAudit(s, readRepoContext(refs, 'cafebabe', cwd)).map(r => r.subject), ['cafebabe']);
   assert.deepEqual(repoAudit(s, readRepoContext(refs, sha, cwd)), []);
+});
+
+test('findings on lines the change did not add are listed apart and never affect the verdict', () => {
+  const code = 'var a = 1;\nvar b = 2;\n';
+  const audit = coreAudit({ ...input, content: code, addedLines: [2] }, rules);
+  assert.deepEqual(audit.violations.map(v => [v.line, !!v.existing]), [[1, true], [2, false]]);
+  const result = summarizeAudit([audit], rules);
+  assert.deepEqual([result.violations.map(v => v.line), result.existingViolations!.map(v => v.line)], [[2], [1]]);
+  assert.equal(result.status, 'REQUEST_CHANGES');
+  assert.match(result.summary, /1 errors .* 1 more findings are in existing code/);
+
+  const onlyOld = summarizeAudit([coreAudit({ ...input, content: code, addedLines: [] }, rules)], rules);
+  assert.equal(onlyOld.status, 'APPROVE');
+  assert.equal(onlyOld.violations.length, 0);
+  assert.equal(onlyOld.existingViolations!.length, 2);
+  const md = formatReportToMarkdown(onlyOld);
+  for (const text of ['Findings in Existing Code (do not affect the status) (2)', '| `src/widget.ts` | 1 | error |']) assert.ok(md.includes(text), text);
+
+  // Diff scope never reports existing code at all.
+  assert.deepEqual(coreAudit({ ...input, content: code, addedLines: [2], scope: 'diff' }, rules).violations.map(v => [v.line, !!v.existing]), [[2, false]]);
+});
+
+test('max-violations trimming keeps changed-line findings before existing code', () => {
+  const old = (file: string, line: number, severity: 'error' | 'warning'): Finding => ({ ...hit(file, line, severity), existing: true });
+  const audits: FileAudit[] = [{ file: 'a.ts', violations: [old('a.ts', 1, 'error'), hit('a.ts', 2, 'warning'), old('a.ts', 3, 'warning'), hit('a.ts', 4, 'error')], coverage: [], complete: true }];
+  assert.deepEqual(trimFindings(audits, 3)[0].violations.map(v => v.line), [1, 2, 4]);
+  assert.deepEqual(trimFindings(audits, 2)[0].violations.map(v => v.line), [2, 4]);
 });

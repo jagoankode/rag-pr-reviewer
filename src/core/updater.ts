@@ -7,7 +7,7 @@ import readline from 'readline';
 import chalk from 'chalk';
 import ora from 'ora';
 import { getAppVersion } from './version.js';
-import { loadConfig, getConfigDir } from './config.js';
+import { loadConfig, getConfigDir, getLumioHome } from './config.js';
 import { DocChunk } from './chunker.js';
 import { getQdrantClient, scrollAllPoints } from './db.js';
 import { t } from './i18n.js';
@@ -91,7 +91,7 @@ async function waitForEnter(message: string): Promise<void> {
   rl.close();
 }
 
-const INSTALLED_APP_DIR = path.join(getConfigDir(), 'app');
+const INSTALLED_APP_DIR = path.join(getLumioHome(), 'app');
 
 /** True when this process runs the installed copy (~/.lumio/app), not a dev checkout. */
 export function isRunningFromInstalledApp(entry: string | undefined = process.argv[1], appDir: string = INSTALLED_APP_DIR): boolean {

@@ -1,4 +1,5 @@
 import parseDiff from 'parse-diff';
+import { out } from './i18n.js';
 
 export interface DiffLine {
   file: string;
@@ -12,6 +13,18 @@ export interface AnnotatedFileDiff {
   annotatedText: string;
   addedLinesCount: number;
   unavailable?: string;
+}
+
+/** Generated Jest snapshot artifacts are excluded from review and coverage entirely. */
+export const isGeneratedSnapshotFile = (file: string): boolean => /(^|\/)__snapshots__\//.test(file.replace(/\\/g, '/'));
+
+export function excludeGeneratedSnapshots(files: AnnotatedFileDiff[]): { reviewable: AnnotatedFileDiff[]; excluded: { file: string; reason: string }[] } {
+  const reviewable: AnnotatedFileDiff[] = [], excluded: { file: string; reason: string }[] = [];
+  for (const file of files) {
+    if (isGeneratedSnapshotFile(file.file)) excluded.push({ file: file.file, reason: out('skipSnapshot') });
+    else reviewable.push(file);
+  }
+  return { reviewable, excluded };
 }
 
 const ESCAPES: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 };

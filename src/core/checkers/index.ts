@@ -30,7 +30,7 @@ const isFileCheck = (spec: CheckSpec): spec is CheckOf<FileCheck> => spec.type i
 export const hasChecks = (rule: Readonly<ReviewRule>): boolean => !!rule.checks?.length;
 
 /** The rule's checks enforce all of it, so the AI prompt can skip it. */
-export const fullyCovered = (rule: Readonly<ReviewRule>): boolean => hasChecks(rule) && rule.checksComplete === true;
+export const fullyCovered = (rule: Readonly<ReviewRule>): boolean => hasChecks(rule) && rule.checksComplete === true && !rule.checkErrors?.length;
 
 export interface CheckHit {
   rule: Readonly<ReviewRule>;
@@ -55,9 +55,15 @@ const applies = (file: string, spec: CheckSpec, rule: Readonly<ReviewRule>): boo
   return (!files?.length || matchAny(file, files)) && !matchAny(file, spec.exclude);
 };
 
+export const hasApplicableFileChecks = (file: string, rule: Readonly<ReviewRule>): boolean =>
+  !!rule.checks?.some(spec => isFileCheck(spec) && applies(file, spec, rule));
+
+export const hasOnlyRepositoryChecks = (rule: Readonly<ReviewRule>): boolean =>
+  hasChecks(rule) && rule.checks!.every(spec => !isFileCheck(spec));
+
 /** Runs every rule's file checks against one file. Parse errors never manufacture findings. */
-export function runChecks(input: ReviewInput, snapshot: RuleSnapshot): CheckHit[] {
-  if (input.error || !isScriptFile(input.file) || input.file.includes('/__snapshots__/')) return [];
+export function runChecks(input: ReviewInput, snapshot: RuleSnapshot, failedRules?: Set<string>): CheckHit[] {
+  if (input.error || !isScriptFile(input.file) || /(^|\/)__snapshots__\//.test(input.file)) return [];
   const source = parseSource(input);
   if (hasParseErrors(source)) return [];
   const lines = input.content.split('\n');
@@ -70,6 +76,7 @@ export function runChecks(input: ReviewInput, snapshot: RuleSnapshot): CheckHit[
       try {
         raws = (PRIMITIVES[spec.type] as Primitive)(ctx);
       } catch (error) {
+        failedRules?.add(rule.id);
         // One faulty check must not abort the whole review.
         logError(`Check:${spec.type}`, error, { file: input.file, rule: rule.id });
         continue;

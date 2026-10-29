@@ -29,7 +29,8 @@ const FORMAT = rule('T2 Formatting', 'Formatting.', { checksComplete: true, chec
 ] });
 const SEMANTIC = rule('T9 Pure Functions', 'Extract pure functions out of the component body.');
 
-const input = (content: string, extra: Partial<ReviewInput> = {}): ReviewInput => ({ file: 'src/a.ts', content, folderFiles: [], addedLines: [], diff: '', scope: 'full', hash: '', ...extra });
+// Default: a new file, so every line is added by the change.
+const input = (content: string, extra: Partial<ReviewInput> = {}): ReviewInput => ({ file: 'src/a.ts', content, folderFiles: [], addedLines: content.split('\n').map((_, i) => i + 1), diff: '', scope: 'full', hash: '', ...extra });
 const checks = (content: string, rules: ReviewRule[], extra: Partial<ReviewInput> = {}) => deterministicAudit(input(content, extra), snapshotRules(rules)).map(v => `${v.line}:${v.check}`);
 const aiResponse = (ruleId: string, status = 'PASS', violations: unknown[] = []) => JSON.stringify({ coverage: [{ ruleId, status, reason: 'checked', violations }] });
 

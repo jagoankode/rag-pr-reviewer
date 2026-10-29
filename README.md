@@ -186,14 +186,79 @@ Lumio membaca semua rule aktif (paginated, read-only), lalu memeriksa setiap fil
 2. **AI** memeriksa klausul semantik yang tidak bisa diputuskan parser, hanya untuk rule yang `targetFiles`-nya
    cocok dengan file. Rule dengan `checksComplete: true` tidak dikirim ke AI. Temuan AI divalidasi (rule ID,
    file, baris, scope diff) dan **ikut menentukan verdict**; temuan yang invalid dibuang.
+   Jawaban yang kehilangan rule atau memiliki coverage tidak valid mendapat maksimal satu panggilan susulan,
+   hanya untuk rule tersebut. Susulan memakai slot concurrency dan perlindungan blokir akun yang sama.
+
+**Coverage:** `PASS` dan `FAIL` berarti pasangan file-rule telah terverifikasi dalam scope review.
+`NOT_APPLICABLE` (N/A) berarti rule tidak berlaku; `UNVERIFIED` berarti pemeriksaan belum lengkap.
+Jawaban AI yang hilang/tidak valid serta file yang belum diaudit karena batas temuan tidak dihitung PASS.
+Checks parsial saja juga belum membuktikan seluruh isi rule, tetapi pelanggaran yang ditemukannya langsung `FAIL`.
+Dalam `--ai-scope changed`, temuan AI di baris lama dibuang tanpa membuat rule UNVERIFIED.
+Laporan menampilkan judul rule dan jumlah terverifikasi/total, N/A, serta belum terverifikasi secara terpisah.
+Karena itu, `--core-only` dapat menghasilkan `COMMENT` tanpa temuan jika masih ada rule semantik.
 
 **Bahasa:** komentar AI selalu dalam bahasa Inggris. Pesan temuan deterministik berasal dari `checks` di
 database, jadi bahasanya ditentukan tim; `rules compile` menyusunnya dalam bahasa Inggris kecuali diberi `--lang id`.
 
-**Verdict:** ada `error` → `REQUEST_CHANGES`; hanya `warning` → `COMMENT`; tanpa temuan → `APPROVE`.
+**Verdict:** ada `error` → `REQUEST_CHANGES`; hanya `warning` atau coverage belum lengkap → `COMMENT`;
+tanpa temuan dan coverage lengkap → `APPROVE`.
 Severity temuan deterministik berasal dari `checks`; AI memakai `error` untuk klausul MUST/never/forbidden/mandatory.
 Jika AI gagal/timeout pada sebuah file, temuan deterministik tetap dilaporkan dan review ditandai belum
 lengkap (tidak pernah `APPROVE`). File yang dihapus atau biner dilewati tanpa memblokir verdict.
+
+**Kode lama:** seluruh file tetap menjadi konteks AI. Default `--ai-scope changed` membatasi temuan AI
+ke baris yang ditambah atau diubah. Checks deterministik tetap memeriksa file utuh dengan `--scope full`
+(default). Gunakan `--ai-scope full` untuk turut meminta temuan AI pada kode lama.
+Hanya temuan di baris yang ditambah perubahan ini yang menentukan verdict. Temuan di baris lama ditampilkan terpisah (terminal: bagian redup di akhir;
+markdown: "Temuan di Kode Lama"; `--json`: `existingViolations`) dan tidak dihitung ke `--max-violations`.
+`--scope diff` tidak melaporkan kode lama sama sekali.
+
+**Kecepatan:** `--concurrency` (default 8) mengatur jumlah file yang diaudit AI bersamaan. Provider yang sibuk
+(429/5xx) dicoba ulang otomatis hingga 3 kali dengan jeda bertahap; akun atau key yang ditolak (401/403) tidak
+dicoba ulang, dan file sisanya berhenti mengirim request. Turunkan, mis. `--concurrency 2`, bila provider membatasi.
+Concurrency adaptif aktif secara default: slot dikurangi separuh setelah dua respons 429 beruntun (minimum 1),
+lalu bertambah satu setelah lima respons sukses, hingga batas `--concurrency`. `--no-adaptive-concurrency` mematikannya.
+File terbesar diaudit lebih dulu agar file lambat tidak menjadi ekor run; urutan laporan tetap urutan path.
+Dengan `--ai-scope changed`, file yang tidak menambah baris tidak dikirim ke AI, dan rule yang seluruhnya
+ditegakkan checks tidak pernah masuk prompt.
+
+**Cache:** hasil lengkap per file disimpan di `~/.lumio/cache/reviews/` selama maksimal 7 hari,
+dengan batas 50 MiB total, 5 MiB per entri, dan 2.000 entri. Kunci mencakup isi/path file, daftar file satu folder,
+diff/baris berubah, hash rule, versi engine/prompt, model/provider/endpoint, bahasa, serta scope deterministik dan AI.
+Hasil incomplete, error, skipped, atau UNVERIFIED tidak disimpan. Entri rusak/kedaluwarsa dianggap cache miss;
+direktori dipindai sekali per run, dan dipindai ulang hanya bila batas ukuran/jumlah terlewati. `--no-cache` melewati pembacaan dan penulisan.
+Cache menyimpan komentar/temuan review, bukan credential koneksi; perlakukan direktori ini sebagai data lokal privat.
+
+Untuk menguji checkout pengembangan gunakan `lumio-dev` (environment `dev` secara default); `lumio` menjalankan versi production:
+
+```bash
+lumio-dev review --source origin/feature-example --target origin/main --no-cache
+lumio-dev review --source origin/feature-example --target origin/main --ai-scope full
+lumio-dev review --source origin/feature-example --target origin/main --no-adaptive-concurrency
+```
+
+**Environment.** Config, `.env`, cache rule, cache review, log, dan database lokal bisa dipisah per environment,
+misalnya collection rule development di samping production. Aplikasi dan CA bundle tetap dipakai bersama.
+
+```bash
+lumio env create dev --collection team-rules-dev   # salin config default, ganti collection
+lumio env list                                     # daftar environment, collection, dan model
+lumio --env dev review --source origin/feature-example --target origin/main
+LUMIO_ENV=dev lumio                                # sama, lewat variabel environment
+```
+
+| Environment | Lokasi |
+| --- | --- |
+| `default` | `~/.lumio` |
+| `<nama>` | `~/.lumio/envs/<nama>` |
+
+Urutan prioritas: `--env`, `LUMIO_ENV`, lalu `LUMIO_CONFIG_DIR` (direktori bebas). Selain `default`, setiap perintah
+mencetak environment aktif ke stderr; environment yang belum dibuat ditolak alih-alih memakai config kosong.
+
+Output `--json` menyertakan `coverageSummary`, `cache` (hit/miss saat aktif), serta `metrics`:
+`elapsedMs` (sampai hasil audit dirangkum), `aiCalls` (pemanggilan awal/susulan), `aiRequests`
+(respons HTTP, termasuk retry), dan `incompleteFiles`. Snapshot Jest (`__snapshots__/`) dikecualikan dari review dan tercantum di `excludedFiles`.
+Waktu proses CLI dapat lebih besar daripada `elapsedMs` karena startup/build dan pencetakan laporan.
 
 **Exit code** (`--fail-on error|warning|never`, default `error`): `1` bila verdict mencapai level tersebut,
 `2` bila review gagal dijalankan. Contoh git hook `.git/hooks/pre-commit`:

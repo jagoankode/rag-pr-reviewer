@@ -4,7 +4,7 @@ import path from 'path';
 import tls from 'tls';
 import { X509Certificate } from 'crypto';
 import { execFileSync } from 'child_process';
-import { getConfigDir } from './config.js';
+import { getLumioHome } from './config.js';
 import { t } from './i18n.js';
 import { logError } from './logger.js';
 
@@ -34,7 +34,7 @@ const toPem = (base64: string): string => `-----BEGIN CERTIFICATE-----\n${base64
  */
 export function windowsRootCertificates(refresh = false): string[] {
   if (!isWsl()) return [];
-  const file = path.join(getConfigDir(), 'cache', 'windows-roots.pem');
+  const file = path.join(getLumioHome(), 'cache', 'windows-roots.pem');
   const fresh = (): boolean => fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs < WINDOWS_ROOTS_MAX_AGE_MS;
   try {
     if (refresh || !fresh()) {

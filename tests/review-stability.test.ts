@@ -10,7 +10,7 @@ import { ReviewInput } from '../src/core/review-input.js';
 import { setLanguage } from '../src/core/i18n.js';
 setLanguage('en');
 const input: ReviewInput = { file:'a.ts', content:'const a = 1;\n', folderFiles:['b.ts','a.ts'], addedLines:[1], diff:'diff', scope:'full', hash:'untrusted' };
-const rules = snapshotRules([{ id:'no-var', source:'team', title:'N1 Declarations', content:'- Never use `var`; always use `const` by default.', checks:[{ type:'forbid-syntax', syntax:'var', severity:'error', message:'Use const instead of var.' }] }]);
+const rules = snapshotRules([{ id:'no-var', source:'team', title:'N1 Declarations', content:'Never use `var`.', checksComplete:true, checks:[{ type:'forbid-syntax', syntax:'var', severity:'error', message:'Use const instead of var.' }] }]);
 const refs = {base:'base',head:'head',mergeBase:'ancestor',mode:'committed-pr'};
 test('deterministic findings are identical across repeated, uncached runs',()=>{
  const i={...input,content:'var a = 1;\nvar b = 2;\n'};
@@ -52,7 +52,7 @@ test('report output follows the display language; rule comments stay as written'
  try {
   setLanguage('id');
   const result=summarizeAudit(audits,rules);
-  assert.match(result.summary,/^1 file direview; 1 error dan 0 warning di 1 file\.$/);
+  assert.match(result.summary,/^1 file direview; 1 error dan 0 warning di 1 file\. 1\/1 pasangan file-rule terverifikasi; 0 N\/A; 0 belum terverifikasi\.$/);
   assert.deepEqual(result.skippedFiles,[{file:'gone.ts',reason:'File dihapus'}]);
   const md=formatReportToMarkdown(result);
   for(const text of ['# Lumio - Laporan Review Pull Request','## Ringkasan','File yang Dilewati','Use const instead of var.'])assert.ok(md.includes(text),text);

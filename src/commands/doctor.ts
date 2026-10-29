@@ -4,7 +4,7 @@ import tls from 'tls';
 import { execFileSync } from 'child_process';
 import chalk from 'chalk';
 import ora from 'ora';
-import { AppConfig, getConfigDir, loadConfig, resolveProviderForModel } from '../core/config.js';
+import { AppConfig, getConfigDir, getEnvironment, getLumioHome, loadConfig, resolveProviderForModel } from '../core/config.js';
 import { getAppVersion } from '../core/version.js';
 import { compareSemver, fetchLatestVersion } from '../core/updater.js';
 import { loadReviewRules } from '../core/review-rules.js';
@@ -47,7 +47,7 @@ function checkNode(): CheckResult {
 /** The CA bundle the `lumio` launcher builds before Node starts, when this process was started through it. */
 function launcherBundle(): string | undefined {
   const file = process.env.NODE_EXTRA_CA_CERTS;
-  return file && path.resolve(file) === path.join(getConfigDir(), 'cache', 'ca-bundle.pem') && fs.existsSync(file) ? file : undefined;
+  return file && path.resolve(file) === path.join(getLumioHome(), 'cache', 'ca-bundle.pem') && fs.existsSync(file) ? file : undefined;
 }
 
 /** The user's own NODE_EXTRA_CA_CERTS; the launcher keeps it in LUMIO_USER_EXTRA_CA_CERTS and points Node at its bundle. */
@@ -77,7 +77,8 @@ function checkConfig(config: AppConfig): CheckResult {
   if (!fs.existsSync(file)) return { status: 'warn', detail: t('doctorConfigMissing', { file }), hint: t('doctorConfigHint') };
   const project = ['.lumiorc.json', '.lumio.json'].find(name => fs.existsSync(path.join(process.cwd(), name)));
   const db = config.dbType === 'qdrant' ? `Qdrant · ${config.qdrantCollection || '-'}` : 'LanceDB';
-  return { status: 'ok', detail: `${file} · ${db}${project ? ` · ${t('doctorProjectConfig', { file: project })}` : ''}` };
+  const env = getEnvironment().name;
+  return { status: 'ok', detail: `${env ? `env ${env} · ` : ''}${file} · ${db}${project ? ` · ${t('doctorProjectConfig', { file: project })}` : ''}` };
 }
 
 /** Who signed the server certificate, and whether this process trusts it. Shows TLS inspection by name. */

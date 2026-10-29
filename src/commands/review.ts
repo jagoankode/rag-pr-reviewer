@@ -3,15 +3,17 @@ import { resolveReviewRefs, snapshotReview } from '../core/review-snapshot.js';
 import chalk from 'chalk';
 import ora from 'ora';
 import { isGitRepo, getGitDiff } from '../core/git.js';
-import { parseAnnotatedDiffFiles } from '../core/diff-parser.js';
-import { loadReviewRules } from '../core/review-rules.js';
+import { excludeGeneratedSnapshots, parseAnnotatedDiffFiles } from '../core/diff-parser.js';
+import { loadReviewRules, RuleSnapshot } from '../core/review-rules.js';
 import { captureReviewInputs, ReviewInput } from '../core/review-input.js';
-import { auditFile, coreAudit, summarizeAudit, FileAudit } from '../core/review-engine.js';
+import { auditFile, coreAudit, summarizeAudit, FileAudit, isExisting, AIScope } from '../core/review-engine.js';
 import { readRepoContext, repoAudit } from '../core/checkers/git.js';
 import { buildHybridPrompt } from '../core/review-prompt.js';
 import { saveReviewReport } from '../core/history.js';
-import { loadConfig } from '../core/config.js';
-import { callLLM } from '../core/llm-client.js';
+import { loadConfig, resolveProviderForModel } from '../core/config.js';
+import { callLLM, stopAfterAccountBlock } from '../core/llm-client.js';
+import { ReviewCache, reviewCacheKey } from '../core/review-cache.js';
+import { AdaptiveConcurrency } from '../core/adaptive-concurrency.js';
 
 import { logError } from '../core/logger.js';
 import { out, t } from '../core/i18n.js';
@@ -24,6 +26,9 @@ export interface ReviewOptions {
   source?: string;        // source/feature branch
   target?: string;        // target/base branch
   scope?: 'full' | 'diff'; // 'full' = review 1 file utuh terdampak | 'diff' = review baris diff saja (default: 'full')
+  aiScope?: AIScope;
+  cache?: boolean;
+  adaptiveConcurrency?: boolean;
   fetchRemote?: boolean;
   model?: string;
   limit?: number;
@@ -36,6 +41,8 @@ export interface ReviewOptions {
 }
 
 const AI_TIMEOUT_MS = 180_000;
+/** Files audited by AI in parallel; failed calls on a busy provider are retried with backoff (see callLLM). */
+export const DEFAULT_CONCURRENCY = 8;
 
 export function extractReviewResult(rawText: string): FileReviewResult {
   const text = (rawText || '').trim();
@@ -95,6 +102,8 @@ export function extractReviewResult(rawText: string): FileReviewResult {
 }
 
 export async function reviewCommand(options: ReviewOptions): Promise<PRReviewResult | void> {
+  const startedAt = performance.now();
+  let aiCalls = 0, aiRequests = 0;
   const isRepo = await isGitRepo();
   if (!isRepo) {
     console.error(chalk.red(t('notGitRepoError')));
@@ -149,9 +158,10 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     }
 
     spinner.text = chalk.cyan(t('reviewParsing'));
-    const fileDiffs = parseAnnotatedDiffFiles(rawDiff).sort((a,b) => a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
+    const parsedDiffs = parseAnnotatedDiffFiles(rawDiff).sort((a,b) => a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
+    const { reviewable: fileDiffs, excluded: excludedFiles } = excludeGeneratedSnapshots(parsedDiffs);
 
-    if (fileDiffs.length === 0) {
+    if (parsedDiffs.length === 0) {
       spinner.info(chalk.yellow(t('reviewNoLineChanges')));
       return;
     }
@@ -163,23 +173,46 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     spinner.succeed(chalk.green(`${t('reviewStarting', { files: fileDiffs.length, rules: rules.rules.length })}\n`));
 
     const inputs = captureReviewInputs(fileDiffs, { ...options, target: targetBranch ? refs.base : undefined, source: sourceBranch && targetBranch ? refs.head : undefined });
+    const llm = stopAfterAccountBlock(callLLM);
+    const limiter = options.adaptiveConcurrency !== false ? new AdaptiveConcurrency(Math.max(1, options.concurrency || DEFAULT_CONCURRENCY)) : undefined;
+    const cache = options.cache !== false && !options.coreOnly ? new ReviewCache() : undefined;
+    const provider = resolveProviderForModel(config, modelName);
+    const cacheContext = { model: modelName, provider: provider.providerId, baseUrl: provider.baseUrl,
+      language: config.language || 'id', aiScope: options.aiScope || 'changed' as const };
     const maxViolations = typeof options.maxViolations === 'number' && options.maxViolations > 0 ? options.maxViolations : undefined;
     const { audits, limitNote, partial } = await auditInputs(inputs, {
-      concurrency: options.coreOnly ? inputs.length : Math.max(1, options.concurrency || 4),
+      rules,
+      concurrency: options.coreOnly ? inputs.length : Math.max(1, options.concurrency || DEFAULT_CONCURRENCY),
       maxViolations,
       signal: abortController.signal,
       quiet: !!options.json,
-      audit: input => options.coreOnly ? Promise.resolve(coreAudit(input, rules)) : auditFile(input, rules, (findings, aiRules) => callLLM(
-        buildHybridPrompt(input, aiRules, findings), modelName, AbortSignal.any([abortController.signal, AbortSignal.timeout(AI_TIMEOUT_MS)]), config, { temperature: 0 }
-      )),
+      audit: async input => {
+        if (options.coreOnly) return coreAudit(input, rules);
+        const key = cache ? reviewCacheKey(input, rules, cacheContext) : undefined;
+        const cached = key ? await cache!.get(key) : undefined;
+        if (cached) return cached;
+        const audit = await auditFile(input, rules, (findings, aiRules) => {
+          aiCalls++;
+          const signal = AbortSignal.any([abortController.signal, AbortSignal.timeout(AI_TIMEOUT_MS)]);
+          const call = () => llm(buildHybridPrompt(input, aiRules, findings, options.aiScope), modelName, signal, config,
+            { temperature: 0, onResponse: status => { aiRequests++; limiter?.response(status); } });
+          return limiter ? limiter.run(signal, call) : call();
+        }, options.aiScope);
+        if (key && !abortController.signal.aborted) await cache!.put(key, audit);
+        return audit;
+      },
     });
     if (abortController.signal.aborted) return;
 
     const repository = repoAudit(rules, readRepoContext(refs, sourceBranch));
     const reviewResult = summarizeAudit(audits, rules, repository, partial);
+    if (excludedFiles.length) reviewResult.excludedFiles = excludedFiles;
+    if (cache) reviewResult.cache = { hits: cache.hits, misses: cache.misses };
+    reviewResult.metrics = { elapsedMs: Math.round(performance.now() - startedAt), aiCalls, aiRequests,
+      incompleteFiles: audits.filter(a => !a.skipped && (!a.complete || a.coverage.some(c => c.status === 'UNVERIFIED'))).length };
     if (limitNote) reviewResult.notes = [limitNote, ...(reviewResult.notes || [])];
     if (options.coreOnly) reviewResult.notes = [out('coreOnly'), ...(reviewResult.notes || [])];
-    reviewResult.reviewSnapshot = snapshotReview(inputs, rules, rawDiff, refs, options.scope || 'full');
+    reviewResult.reviewSnapshot = snapshotReview(inputs, rules, rawDiff, refs, options.scope || 'full', options.aiScope || 'changed');
 
     if (options.json) {
       console.log(JSON.stringify(reviewResult, null, 2));
@@ -225,21 +258,29 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
   }
 }
 
-/** Audits files with bounded parallelism; results keep input order. Stops scheduling once maxViolations is reached and trims the result to that many findings. */
-async function auditInputs(inputs: ReviewInput[], opts: { concurrency: number; maxViolations?: number; signal: AbortSignal; quiet: boolean; audit: (input: ReviewInput) => Promise<FileAudit> }): Promise<{ audits: FileAudit[]; limitNote?: string; partial?: boolean }> {
+/**
+ * Audits files with bounded parallelism; results keep input order. Stops scheduling once maxViolations findings on changed
+ * lines are reached and trims the result to that many findings. Findings in existing code do not count toward the limit.
+ */
+export async function auditInputs(inputs: ReviewInput[], opts: { rules: RuleSnapshot; concurrency: number; maxViolations?: number; signal: AbortSignal; quiet: boolean; audit: (input: ReviewInput) => Promise<FileAudit> }): Promise<{ audits: FileAudit[]; limitNote?: string; partial?: boolean }> {
   const results: (FileAudit | undefined)[] = new Array(inputs.length);
   const spinner = ora({ text: t('auditing', { done: 0, total: inputs.length }), isSilent: opts.quiet }).start();
   let next = 0, done = 0, total = 0, stopped = false;
+  // Largest files first: they take longest at the AI, so starting them early keeps a slow file from finishing last alone.
+  const order = inputs.map((_, i) => i).sort((a, b) => inputs[b].content.length - inputs[a].content.length || a - b);
   const worker = async () => {
     while (!stopped && !opts.signal.aborted && next < inputs.length) {
-      const index = next++;
+      const index = order[next++];
       const audit = await opts.audit(inputs[index]);
       results[index] = audit;
       done++;
-      total += audit.violations.length;
+      const changed = audit.violations.filter(v => !isExisting(v)), existing = audit.violations.length - changed.length;
+      total += changed.length;
       spinner.text = t('auditingFindings', { done, total: inputs.length, count: total });
       if (!opts.quiet && audit.violations.length) {
-        spinner.stopAndPersist({ symbol: audit.violations.some(v => v.severity === 'error') ? chalk.red('✖') : chalk.yellow('▲'), text: t('fileFindings', { file: audit.file, count: audit.violations.length }) });
+        const symbol = changed.some(v => v.severity === 'error') ? chalk.red('✖') : changed.length ? chalk.yellow('▲') : chalk.gray('·');
+        const text = existing ? t('fileFindingsExisting', { file: audit.file, count: changed.length, existing }) : t('fileFindings', { file: audit.file, count: changed.length });
+        spinner.stopAndPersist({ symbol, text: changed.length ? text : chalk.gray(text) });
         spinner.start();
       }
       if (opts.maxViolations && total >= opts.maxViolations) stopped = true;
@@ -247,7 +288,12 @@ async function auditInputs(inputs: ReviewInput[], opts: { concurrency: number; m
   };
   await Promise.all(Array.from({ length: Math.min(opts.concurrency, inputs.length) }, worker));
   spinner.succeed(t('audited', { done, total: inputs.length, count: total }));
-  const audits = results.filter((a): a is FileAudit => !!a);
+  // Preserve the coverage denominator when a finding limit leaves files unscheduled.
+  const audits = inputs.map((input, index): FileAudit => results[index] || (input.skipped
+    ? { file: input.file, violations: [], coverage: [], complete: true, skipped: input.skipped }
+    : { file: input.file, violations: [], complete: false, unaudited: true, coverage: opts.rules.rules.map(rule => ({
+      ruleId: rule.id, file: input.file, status: 'UNVERIFIED', reason: 'File was not audited before the run stopped.',
+    })) }));
   if (!stopped) return { audits };
   // Files already in flight finish past the limit; unaudited files leave the review incomplete.
   const limitNote = out('limitReached', { shown: opts.maxViolations!, total, unaudited: inputs.length - done });
@@ -255,10 +301,14 @@ async function auditInputs(inputs: ReviewInput[], opts: { concurrency: number; m
   return { audits: trimFindings(audits, opts.maxViolations!), limitNote, partial: done < inputs.length };
 }
 
-/** Keeps exactly `max` findings, errors before warnings (each in input order), so a dropped error never softens the verdict. */
+/**
+ * Keeps exactly `max` findings: changed lines before existing code, errors before warnings (each in input order),
+ * so a dropped finding never softens the verdict.
+ */
 export function trimFindings(audits: FileAudit[], max: number): FileAudit[] {
   const all = audits.flatMap(a => a.violations);
-  const keep = new Set([...all.filter(v => v.severity === 'error'), ...all.filter(v => v.severity !== 'error')].slice(0, max));
+  const rank = (v: FileAudit['violations'][number]) => (isExisting(v) ? 2 : 0) + (v.severity === 'error' ? 0 : 1);
+  const keep = new Set([0, 1, 2, 3].flatMap(r => all.filter(v => rank(v) === r)).slice(0, max));
   return audits.map(a => {
     const kept = a.violations.filter(v => keep.has(v));
     return kept.length === a.violations.length ? a : { ...a, violations: kept, complete: false };
@@ -303,7 +353,22 @@ function printReviewTerminalReport(result: PRReviewResult) {
   if (!result.violations.length && !result.repository?.length) {
     console.log(result.status === 'APPROVE' ? chalk.green(out('noViolations')) : chalk.yellow(out('noViolationsIncomplete')));
   }
+  // Existing code comes last, dimmed and counted per file and rule; the line-level detail is in the markdown report and --json.
+  const existing = result.existingViolations || [];
+  if (existing.length) {
+    console.log(chalk.gray(`\n── ${out('existingTitle', { count: existing.length })} ──`));
+    const byFile = new Map<string, Map<string, number>>();
+    for (const v of existing) {
+      const rules = byFile.get(v.file) || byFile.set(v.file, new Map()).get(v.file)!;
+      rules.set(v.rule, (rules.get(v.rule) || 0) + 1);
+    }
+    for (const [file, rules] of byFile) {
+      console.log(chalk.gray(`  ${file}: ${[...rules].map(([rule, count]) => `${rule} ×${count}`).join(', ')}`));
+    }
+    console.log(chalk.gray(`  ${out('existingHint')}\n`));
+  }
   if (result.skippedFiles?.length) console.log(chalk.gray(`${out('skipped')}: ${result.skippedFiles.map(s => `${s.file} (${s.reason})`).join(', ')}`));
+  if (result.excludedFiles?.length) console.log(chalk.gray(`${out('excluded')}: ${result.excludedFiles.map(file => `${file.file} (${file.reason})`).join(', ')}`));
   for (const note of result.notes || []) console.log(chalk.yellow(`⚠ ${note}`));
   console.log(chalk.bold.cyan('\n═══════════════════════════════════════════════════════════════════\n'));
 }

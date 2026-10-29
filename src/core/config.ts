@@ -36,11 +36,82 @@ export interface AppConfig {
   qdrantCollection?: string;
 }
 
-const PRIMARY_CONFIG_DIR = path.join(os.homedir(), '.lumio');
+/** Name of the built-in environment that lives directly in ~/.lumio. */
+export const DEFAULT_ENV = 'default';
+const ENV_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+
+export interface LumioEnvironment {
+  /** DEFAULT_ENV, a named environment, or undefined for a raw LUMIO_CONFIG_DIR. */
+  name?: string;
+  configDir: string;
+  /** Set when the requested name is invalid; the default environment is used instead and the CLI exits. */
+  error?: string;
+}
+
+/** Reads `--env <name>` / `--env=<name>` anywhere in argv. */
+export function envFlag(argv: readonly string[]): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--') break;
+    if (argv[i] === '--env') return argv[i + 1] ?? '';
+    if (argv[i].startsWith('--env=')) return argv[i].slice(6);
+  }
+  return undefined;
+}
+
+/** argv without the global `--env` option, so commander never sees it on a subcommand. */
+export function stripEnvFlag(argv: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--') { out.push(...argv.slice(i)); break; }
+    if (argv[i] === '--env') { i++; continue; }
+    if (!argv[i].startsWith('--env=')) out.push(argv[i]);
+  }
+  return out;
+}
+
+/**
+ * Environments keep config, .env, rule cache, review cache, logs and local DB apart, e.g. a development rule
+ * collection next to production. Precedence: --env, LUMIO_ENV, LUMIO_CONFIG_DIR (raw directory), ~/.lumio.
+ */
+export function resolveEnvironment(argv: readonly string[], env: NodeJS.ProcessEnv, home: string = os.homedir()): LumioEnvironment {
+  const lumioHome = path.join(home, '.lumio');
+  const flag = envFlag(argv);
+  const requested = flag ?? env.LUMIO_ENV?.trim();
+  // `--env` without a value is a typo, not a request for the default.
+  if (requested !== undefined && (requested || flag === '')) {
+    if (requested === DEFAULT_ENV) return { name: DEFAULT_ENV, configDir: lumioHome };
+    if (!ENV_NAME.test(requested)) return { name: DEFAULT_ENV, configDir: lumioHome, error: requested };
+    return { name: requested, configDir: path.join(lumioHome, 'envs', requested) };
+  }
+  const custom = env.LUMIO_CONFIG_DIR?.trim();
+  if (custom) return { configDir: path.resolve(custom.replace(/^~(?=$|\/)/, home)) };
+  return { name: DEFAULT_ENV, configDir: lumioHome };
+}
+
+export const isValidEnvName = (name: string): boolean => name === DEFAULT_ENV || ENV_NAME.test(name);
+
+// Resolved once at startup: logger, caches and the updater build their paths when their modules load.
+const ENVIRONMENT = resolveEnvironment(process.argv, process.env);
+const PRIMARY_CONFIG_DIR = ENVIRONMENT.configDir;
 const LEGACY_CONFIG_DIR = path.join(os.homedir(), '.pr-rag');
+/** Installation files shared by every environment: app, launcher CA bundle, Windows roots. */
+const LUMIO_HOME = path.join(os.homedir(), '.lumio');
 
 export function getConfigDir(): string {
   return PRIMARY_CONFIG_DIR;
+}
+
+export function getLumioHome(): string {
+  return LUMIO_HOME;
+}
+
+export function getEnvironment(): Readonly<LumioEnvironment> {
+  return ENVIRONMENT;
+}
+
+/** Config directory of a named environment, for `lumio env`. */
+export function envConfigDir(name: string): string {
+  return name === DEFAULT_ENV ? LUMIO_HOME : path.join(LUMIO_HOME, 'envs', name);
 }
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -70,6 +141,7 @@ export async function loadConfig(includeProject = true): Promise<AppConfig> {
     await fs.access(primaryFile);
   } catch {
     try {
+      if (PRIMARY_CONFIG_DIR !== LUMIO_HOME) throw new Error('Only the default environment falls back to ~/.pr-rag');
       await fs.access(legacyFile);
       configFile = legacyFile;
     } catch {
