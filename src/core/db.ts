@@ -39,7 +39,7 @@ export async function getDb(): Promise<lancedb.Connection> {
   return dbInstance;
 }
 
-function wrapDbWriteError(err: any): Error {
+export function wrapDbWriteError(err: any): Error {
   const status = err?.status ?? err?.statusCode;
   const msg = String(err?.message || err?.data?.status?.error || err || '');
   if (status === 401 || status === 403 || /unauthorized|forbidden|permission denied/i.test(msg)) {
@@ -91,12 +91,18 @@ export async function getQdrantClient(): Promise<{ client: QdrantClient; collect
   const exists = collections.collections.some((c) => c.name === collection);
   if (!exists) {
     const vectorSize = getVectorSize(config);
-    await client.createCollection(collection, {
-      vectors: {
-        size: vectorSize,
-        distance: 'Cosine',
-      },
-    });
+    try {
+      await client.createCollection(collection, {
+        vectors: {
+          size: vectorSize,
+          distance: 'Cosine',
+        },
+      });
+    } catch (err) {
+      // A read-only key cannot create it; the collection name is the likelier mistake.
+      const denied = wrapDbWriteError(err);
+      throw denied.message === t('dbNoWriteAccess') ? new Error(t('dbCollectionMissing', { collection })) : denied;
+    }
   }
 
   return { client, collection };

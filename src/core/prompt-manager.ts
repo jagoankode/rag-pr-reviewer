@@ -1,4 +1,4 @@
-import { getQdrantClient } from './db.js';
+import { getQdrantClient, wrapDbWriteError } from './db.js';
 import { loadConfig } from './config.js';
 import { logError } from './logger.js';
 
@@ -143,25 +143,29 @@ export async function saveDynamicPrompt(key: PromptKey, template: string): Promi
   const now = new Date().toISOString();
   const dummyVector = new Array(3072).fill(0);
 
-  await client.upsert(collection, {
-    wait: true,
-    points: [
-      {
-        id: def.id,
-        vector: dummyVector,
-        payload: {
-          originalId: def.id,
-          promptKey: key,
-          source: 'system-prompt',
-          title: def.title,
-          content: template,
-          status: 'ACTIVE',
-          created_at: now,
-          updated_at: now,
+  try {
+    await client.upsert(collection, {
+      wait: true,
+      points: [
+        {
+          id: def.id,
+          vector: dummyVector,
+          payload: {
+            originalId: def.id,
+            promptKey: key,
+            source: 'system-prompt',
+            title: def.title,
+            content: template,
+            status: 'ACTIVE',
+            created_at: now,
+            updated_at: now,
+          },
         },
-      },
-    ],
-  });
+      ],
+    });
+  } catch (err) {
+    throw wrapDbWriteError(err);
+  }
 
   return true;
 }
