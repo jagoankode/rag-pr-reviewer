@@ -427,6 +427,10 @@ async function reviewWorkflowUI(config: AppConfig) {
         name: t('reviewModeStaged'),
         value: 'staged',
       },
+      {
+        name: t('reviewModePath'),
+        value: 'path',
+      },
     ],
   });
 
@@ -434,9 +438,17 @@ async function reviewWorkflowUI(config: AppConfig) {
 
   let targetBranch: string | undefined = undefined;
   let sourceBranch: string | undefined = undefined;
+  let specificPaths: string[] | undefined = undefined;
   let doFetch = false;
 
-  if (diffType === 'pr_branches') {
+  if (diffType === 'path') {
+    const rawPath = await input({
+      message: t('reviewPathPrompt'),
+      validate: (val) => (val.trim().length > 0 ? true : t('reviewPathEmpty')),
+    });
+    if (rawPath.trim().toLowerCase() === 'b' || rawPath.trim().toLowerCase() === 'back') return;
+    specificPaths = rawPath.trim().split(/\s+/).filter(Boolean);
+  } else if (diffType === 'pr_branches') {
     const fetchChoice = await select({
       message: t('reviewFetchPrompt'),
       choices: [
@@ -513,6 +525,7 @@ async function reviewWorkflowUI(config: AppConfig) {
     staged: diffType === 'staged',
     target: targetBranch,
     source: sourceBranch,
+    paths: specificPaths,
     scope: reviewScope,
     fetchRemote: doFetch,
     model: selectedModel,

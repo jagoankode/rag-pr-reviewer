@@ -9,6 +9,7 @@ export interface GitDiffOptions {
   branch?: string;        // Target base branch (legacy / quick option)
   targetBranch?: string;  // Base branch (e.g. main, origin/main)
   sourceBranch?: string;  // Head / feature branch (e.g. feature-x, origin/feature-x, or HEAD)
+  paths?: string[];       // Path file/folder spesifik untuk diff
   fetchRemote?: boolean;  // Optional git fetch before diff
   cwd?: string;
 }
@@ -43,6 +44,10 @@ export async function getGitDiff(options: GitDiffOptions = {}): Promise<string> 
     args.push(options.targetBranch);
   } else if (options.branch) {
     args.push(options.branch);
+  }
+
+  if (options.paths && options.paths.length > 0) {
+    args.push('--', ...options.paths);
   }
 
   try {

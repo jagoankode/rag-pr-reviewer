@@ -25,6 +25,7 @@ export interface ReviewOptions {
   branch?: string;        // target/base branch
   source?: string;        // source/feature branch
   target?: string;        // target/base branch
+  paths?: string[];       // Path file/folder tertentu yang ingin di-review
   scope?: 'full' | 'diff'; // 'full' = review 1 file utuh terdampak | 'diff' = review baris diff saja (default: 'full')
   aiScope?: AIScope;
   cache?: boolean;
@@ -134,6 +135,7 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
       // Self-review compares the worktree with the merge base, so changes already on the base are not reviewed.
       targetBranch: targetBranch ? (sourceBranch ? refs.base : refs.mergeBase) : undefined,
       sourceBranch: sourceBranch && targetBranch ? refs.head : undefined,
+      paths: options.paths,
       fetchRemote: false,
     });
 

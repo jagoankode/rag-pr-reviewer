@@ -148,6 +148,7 @@ rules
 program
   .command('review')
   .description('Review git changes against team rules and pinpoint exact line violations')
+  .argument('[paths...]', 'Optional file or folder paths to review')
   .option('-s, --staged', 'Review only staged changes')
   .option('-b, --branch <branch>', 'Review diff against a specific git branch (legacy alias for --target)')
   .option('--source <branch>', 'Source / feature branch to review (e.g. feature-x or origin/feature-x)')
@@ -165,7 +166,7 @@ program
   .option('--core-only', 'Run deterministic rule checkers only (fast, no AI)')
   .option('--fail-on <level>', 'Exit with code 1 when findings reach this level: error | warning | never', 'error')
   .option('--max-violations <number>', 'Stop after N findings on changed lines; the report then holds exactly N findings', (val) => parseInt(val, 10))
-  .action(async (options) => {
+  .action(async (pathsArg: string[], options) => {
     if (!['full', 'diff'].includes(options.scope)) {
       console.error(chalk.red(t('scopeInvalid', { scope: options.scope })));
       process.exit(2);
@@ -181,6 +182,7 @@ program
 
     const result = await reviewCommand({
       ...options,
+      paths: Array.isArray(pathsArg) && pathsArg.length > 0 ? pathsArg : undefined,
       fetchRemote: options.fetch,
       saveReport: options.save !== false,
     });
