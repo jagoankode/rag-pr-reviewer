@@ -1,18 +1,23 @@
-name: Release
+name: Release & Tag
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+
+permissions:
+  contents: write
 
 jobs:
   release:
-    name: Build & Create GitHub Release
+    name: Auto Tag & GitHub Release
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js 20.x
         uses: actions/setup-node@v4
@@ -29,14 +34,41 @@ jobs:
       - name: Run Tests
         run: npm test
 
-      - name: Create Release Tarball
+      - name: Check Version and Existing Tag
+        id: check_version
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          tar -czf "lumio-${VERSION}.tar.gz" package.json dist/
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists. Skipping release."
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "New version detected: $TAG"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Git Tag
+        if: steps.check_version.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.check_version.outputs.tag }}" -m "Release ${{ steps.check_version.outputs.tag }}"
+          git push origin "${{ steps.check_version.outputs.tag }}"
+
+      - name: Create Release Tarball
+        if: steps.check_version.outputs.exists == 'false'
+        run: |
+          tar -czf "lumio-${{ steps.check_version.outputs.version }}.tar.gz" package.json dist/
 
       - name: Create GitHub Release
+        if: steps.check_version.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.check_version.outputs.tag }}
+          name: Release ${{ steps.check_version.outputs.tag }}
           files: lumio-*.tar.gz
           generate_release_notes: true
         env:
