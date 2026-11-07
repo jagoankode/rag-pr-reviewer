@@ -8,7 +8,7 @@ import { loadReviewRules, RuleSnapshot } from '../core/review-rules.js';
 import { captureReviewInputs, ReviewInput } from '../core/review-input.js';
 import { auditFile, coreAudit, summarizeAudit, FileAudit, isExisting, AIScope } from '../core/review-engine.js';
 import { readRepoContext, repoAudit } from '../core/checkers/git.js';
-import { buildHybridPrompt } from '../core/review-prompt.js';
+import { buildHybridPrompt, buildRulesSystemPrompt, buildFileAuditPrompt } from '../core/review-prompt.js';
 import { saveReviewReport } from '../core/history.js';
 import { loadConfig, resolveProviderForModel } from '../core/config.js';
 import { callLLM, stopAfterAccountBlock } from '../core/llm-client.js';
@@ -194,8 +194,10 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
         const audit = await auditFile(input, rules, (findings, aiRules) => {
           aiCalls++;
           const signal = AbortSignal.any([abortController.signal, AbortSignal.timeout(AI_TIMEOUT_MS)]);
-          const call = () => llm(buildHybridPrompt(input, aiRules, findings, options.aiScope), modelName, signal, config,
-            { temperature: 0, onResponse: status => { aiRequests++; limiter?.response(status); } });
+          const systemPrompt = buildRulesSystemPrompt(aiRules);
+          const userPrompt = buildFileAuditPrompt(input, findings, options.aiScope);
+          const call = () => llm(userPrompt, modelName, signal, config,
+            { temperature: 0, systemPrompt, onResponse: status => { aiRequests++; limiter?.response(status); } });
           return limiter ? limiter.run(signal, call) : call();
         }, options.aiScope);
         if (key && !abortController.signal.aborted) await cache!.put(key, audit);

@@ -88,7 +88,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
  * Fungsi ini menangani SSE parsing dan standard JSON secara native tanpa ketergantungan
  * pada parser kaku bawaan library luar.
  */
-export async function callLLM(prompt: string, modelOverride?: string, signal?: AbortSignal, frozenConfig?: AppConfig, settings?: { temperature?: number; onResponse?: (status: number) => void }): Promise<string> {
+export async function callLLM(prompt: string, modelOverride?: string, signal?: AbortSignal, frozenConfig?: AppConfig, settings?: { temperature?: number; onResponse?: (status: number) => void; systemPrompt?: string }): Promise<string> {
   const config = frozenConfig || await loadConfig();
   const resolved = resolveProviderForModel(config, modelOverride);
   
@@ -110,15 +110,22 @@ export async function callLLM(prompt: string, modelOverride?: string, signal?: A
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
+  const messages: Array<{ role: string; content: string }> = [];
+  if (settings?.systemPrompt) {
+    messages.push({
+      role: 'system',
+      content: settings.systemPrompt,
+    });
+  }
+  messages.push({
+    role: 'user',
+    content: prompt,
+  });
+
   const body = JSON.stringify({
     model,
     ...(settings?.temperature !== undefined ? { temperature: settings.temperature } : {}),
-    messages: [
-      {
-        role: 'user',
-        content: prompt,
-      },
-    ],
+    messages,
     stream: true, // stream: true menjamin 100% kompatibel dengan 9router SSE maupun OpenAI direct
   });
 
