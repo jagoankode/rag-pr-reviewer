@@ -439,6 +439,7 @@ async function reviewWorkflowUI(config: AppConfig) {
   let targetBranch: string | undefined = undefined;
   let sourceBranch: string | undefined = undefined;
   let specificPaths: string[] | undefined = undefined;
+  let isPathWholeFile = false;
   let doFetch = false;
 
   if (diffType === 'path') {
@@ -448,6 +449,22 @@ async function reviewWorkflowUI(config: AppConfig) {
     });
     if (rawPath.trim().toLowerCase() === 'b' || rawPath.trim().toLowerCase() === 'back') return;
     specificPaths = rawPath.trim().split(/\s+/).filter(Boolean);
+
+    const pathModeChoice = await select<'full' | 'diff' | 'back'>({
+      message: t('reviewPathTargetModePrompt'),
+      choices: [
+        {
+          name: t('reviewPathTargetFull'),
+          value: 'full',
+        },
+        {
+          name: t('reviewPathTargetDiff'),
+          value: 'diff',
+        },
+      ],
+    });
+    if (pathModeChoice === 'back') return;
+    isPathWholeFile = pathModeChoice === 'full';
   } else if (diffType === 'pr_branches') {
     const fetchChoice = await select({
       message: t('reviewFetchPrompt'),
@@ -485,22 +502,25 @@ async function reviewWorkflowUI(config: AppConfig) {
   let selectedModel = config.defaultModel;
 
   // Opsi Scope Review: Full file vs Diff changes only (Default: Full file)
-  const scopeChoice = await select<'full' | 'diff' | 'back'>({
-    message: t('reviewScopePrompt'),
-    choices: [
-      {
-        name: t('reviewScopeFull'),
-        value: 'full',
-      },
-      {
-        name: t('reviewScopeDiff'),
-        value: 'diff',
-      },
-    ],
-  });
+  let reviewScope: 'full' | 'diff' = 'full';
+  if (!isPathWholeFile) {
+    const scopeChoice = await select<'full' | 'diff' | 'back'>({
+      message: t('reviewScopePrompt'),
+      choices: [
+        {
+          name: t('reviewScopeFull'),
+          value: 'full',
+        },
+        {
+          name: t('reviewScopeDiff'),
+          value: 'diff',
+        },
+      ],
+    });
 
-  if (scopeChoice === 'back') return;
-  const reviewScope = scopeChoice === 'diff' ? 'diff' : 'full';
+    if (scopeChoice === 'back') return;
+    reviewScope = scopeChoice === 'diff' ? 'diff' : 'full';
+  }
 
   if (!selectedModel) {
     console.log(chalk.yellow(`\n${t('reviewNoModelSelected')}`));
@@ -526,6 +546,7 @@ async function reviewWorkflowUI(config: AppConfig) {
     target: targetBranch,
     source: sourceBranch,
     paths: specificPaths,
+    wholeFile: isPathWholeFile,
     scope: reviewScope,
     fetchRemote: doFetch,
     model: selectedModel,

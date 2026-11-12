@@ -175,8 +175,11 @@ ln -sf "$BIN_TARGET" "$LEGACY_BIN_TARGET"
 # 4. Pastikan ~/.local/bin masuk ke shell config (.zshrc / .bashrc) jika belum ada
 detect_and_add_path() {
     local rc_file="$1"
+    # Buat file jika belum ada
+    touch "$rc_file" 2>/dev/null || true
     if [ -f "$rc_file" ]; then
-        if ! grep -q '\.local/bin' "$rc_file"; then
+        # Cek apakah export aktif sudah ada (bukan komentar)
+        if ! grep -q '^[[:space:]]*export PATH=.*\.local/bin' "$rc_file"; then
             echo -e "\n# Added by Lumio installer\nexport PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$rc_file"
             echo -e "${CYAN}Menambahkan ~/.local/bin ke ${rc_file}${NC}"
         fi
@@ -185,6 +188,12 @@ detect_and_add_path() {
 
 detect_and_add_path "$HOME/.zshrc"
 detect_and_add_path "$HOME/.bashrc"
+
+# Opsi fallback: Buat symlink ke /usr/local/bin jika writable tanpa sudo
+if [ -w "/usr/local/bin" ] && [ ! -e "/usr/local/bin/lumio" ]; then
+    ln -sf "$BIN_TARGET" "/usr/local/bin/lumio" 2>/dev/null || true
+    ln -sf "$LEGACY_BIN_TARGET" "/usr/local/bin/pr-rag" 2>/dev/null || true
+fi
 
 echo -e "\n${GREEN}✔ Lumio berhasil terinstall!${NC}"
 INSTALLED_VER=$(node -e "try { console.log(require('$INSTALL_DIR/package.json').version); } catch(e) { console.log(''); }")
@@ -195,4 +204,17 @@ if [ -d "$LUMIO_DIR/db" ]; then
     echo -e "${GREEN}🔒 Data Database & Konfigurasi tetap aman dan terjaga.${NC}"
 fi
 echo -e "Binary terpasang di: ${CYAN}$BIN_TARGET${NC}"
-echo -e "Ketik ${GREEN}lumio${NC} di terminal untuk langsung membuka TUI.\n"
+
+# Cek apakah $BIN_DIR sudah ada di $PATH saat ini
+case ":$PATH:" in
+    *":$BIN_DIR:"*)
+        echo -e "Ketik ${GREEN}lumio${NC} di terminal untuk langsung membuka TUI.\n"
+        ;;
+    *)
+        echo -e "${YELLOW}Perhatian: Direktori $BIN_DIR belum aktif di session terminal saat ini.${NC}"
+        echo -e "Jalankan perintah ini atau buka terminal baru:\n"
+        echo -e "    ${GREEN}export PATH=\"\$HOME/.local/bin:\$PATH\"${NC}"
+        echo -e "    atau: ${GREEN}source ~/.zshrc${NC} (jika pakai Zsh)\n"
+        echo -e "Setelah itu ketik ${GREEN}lumio${NC}.\n"
+        ;;
+esac

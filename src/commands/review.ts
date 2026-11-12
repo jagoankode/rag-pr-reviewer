@@ -14,6 +14,7 @@ import { loadConfig, resolveProviderForModel } from '../core/config.js';
 import { callLLM, stopAfterAccountBlock } from '../core/llm-client.js';
 import { ReviewCache, reviewCacheKey } from '../core/review-cache.js';
 import { AdaptiveConcurrency } from '../core/adaptive-concurrency.js';
+import { scanTargetFiles, createSyntheticFullFileDiffs } from '../core/path-scanner.js';
 
 import { logError } from '../core/logger.js';
 import { out, t } from '../core/i18n.js';
@@ -26,6 +27,7 @@ export interface ReviewOptions {
   source?: string;        // source/feature branch
   target?: string;        // target/base branch
   paths?: string[];       // Path file/folder tertentu yang ingin di-review
+  wholeFile?: boolean;    // Review full whole file contents without requiring git diff
   scope?: 'full' | 'diff'; // 'full' = review 1 file utuh terdampak | 'diff' = review baris diff saja (default: 'full')
   aiScope?: AIScope;
   cache?: boolean;
@@ -129,38 +131,54 @@ export async function reviewCommand(options: ReviewOptions): Promise<PRReviewRes
     // Fetch before resolving refs, then use immutable SHAs for both diff and content.
     if (options.fetchRemote) execFileSync('git', ['fetch', '--all', '--prune'], { stdio: 'pipe' });
     const refs = resolveReviewRefs({ ...options, source: sourceBranch, target: targetBranch });
-    const rawDiff = await getGitDiff({
-      staged: options.staged,
-      branch: targetBranch,
-      // Self-review compares the worktree with the merge base, so changes already on the base are not reviewed.
-      targetBranch: targetBranch ? (sourceBranch ? refs.base : refs.mergeBase) : undefined,
-      sourceBranch: sourceBranch && targetBranch ? refs.head : undefined,
-      paths: options.paths,
-      fetchRemote: false,
-    });
 
-    if (abortController.signal.aborted) {
-      spinner.info(chalk.yellow(`\n${t('reviewCancelled')}`));
-      return;
+    let rawDiff = '';
+    let parsedDiffs: import('../core/diff-parser.js').AnnotatedFileDiff[] = [];
+
+    // Jika mode wholeFile (review full content file/folder tanpa syarat git diff)
+    if (options.wholeFile && options.paths && options.paths.length > 0) {
+      spinner.text = chalk.cyan('Scanning files in target path...');
+      const targetFiles = scanTargetFiles(options.paths);
+      if (targetFiles.length === 0) {
+        spinner.info(chalk.yellow(`Tidak ditemukan file yang dapat direview pada: ${options.paths.join(', ')}`));
+        return;
+      }
+      parsedDiffs = createSyntheticFullFileDiffs(targetFiles);
+      rawDiff = parsedDiffs.map(d => d.annotatedText).join('\n\n');
+    } else {
+      rawDiff = await getGitDiff({
+        staged: options.staged,
+        branch: targetBranch,
+        // Self-review compares the worktree with the merge base, so changes already on the base are not reviewed.
+        targetBranch: targetBranch ? (sourceBranch ? refs.base : refs.mergeBase) : undefined,
+        sourceBranch: sourceBranch && targetBranch ? refs.head : undefined,
+        paths: options.paths,
+        fetchRemote: false,
+      });
+
+      if (abortController.signal.aborted) {
+        spinner.info(chalk.yellow(`\n${t('reviewCancelled')}`));
+        return;
+      }
+
+      if (!rawDiff || rawDiff.trim().length === 0) {
+        spinner.info(
+          chalk.yellow(
+            options.staged
+              ? t('reviewNoStaged')
+              : targetBranch && sourceBranch
+              ? t('reviewNoDiffBranches', { target: targetBranch, source: sourceBranch })
+              : targetBranch
+              ? t('reviewNoDiffTarget', { target: targetBranch })
+              : t('reviewNoChanges')
+          )
+        );
+        return;
+      }
+
+      spinner.text = chalk.cyan(t('reviewParsing'));
+      parsedDiffs = parseAnnotatedDiffFiles(rawDiff).sort((a,b) => a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
     }
-
-    if (!rawDiff || rawDiff.trim().length === 0) {
-      spinner.info(
-        chalk.yellow(
-          options.staged
-            ? t('reviewNoStaged')
-            : targetBranch && sourceBranch
-            ? t('reviewNoDiffBranches', { target: targetBranch, source: sourceBranch })
-            : targetBranch
-            ? t('reviewNoDiffTarget', { target: targetBranch })
-            : t('reviewNoChanges')
-        )
-      );
-      return;
-    }
-
-    spinner.text = chalk.cyan(t('reviewParsing'));
-    const parsedDiffs = parseAnnotatedDiffFiles(rawDiff).sort((a,b) => a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
     const { reviewable: fileDiffs, excluded: excludedFiles } = excludeGeneratedSnapshots(parsedDiffs);
 
     if (parsedDiffs.length === 0) {
