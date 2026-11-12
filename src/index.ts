@@ -156,6 +156,7 @@ program
   .option('--fetch', 'Fetch remote branches before comparing (git fetch --all)')
   .option('--scope <scope>', 'full = audit whole changed files, diff = only added lines', 'full')
   .option('--ai-scope <scope>', 'AI findings: changed lines (default) or full file; full file is always provided as context', 'changed')
+  .option('--whole-file', 'Review full whole file content for specified paths without requiring git diff')
   .option('--no-cache', 'Bypass reading and writing the file review cache')
   .option('--no-adaptive-concurrency', 'Keep AI concurrency fixed instead of halving it after repeated 429 responses')
   .option('-m, --model <model>', 'LLM model to use (default: the active model set in the TUI)')
